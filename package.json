@@ -2,9 +2,9 @@
   "name": "@figedi/cqrs",
   "version": "1.1.0",
   "description": "Yet another cqrs implementation",
-  "license": "ISC",
-  "author": "",
-  "main": "index.js",
+  "license": "MIT",
+  "author": "Felix Kaminski",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "format": "run-s format:imports format:package-json format:prettier format:eslint",
