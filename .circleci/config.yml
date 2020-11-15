@@ -26,7 +26,8 @@ workflows:
       - ci/push_to_npm:
           name: push_to_npm
           context: ci-default-v1
-          image: release
+          image: builder
+          public: true
           filters:
             branches:
               only:
