@@ -1,0 +1,21 @@
+# IDEs
+/.vscode
+/.idea
+
+# Dependencies
+/node_modules
+
+# Build
+/dist
+
+# Code Quality
+/coverage
+/.nyc_output
+
+# Running locally
+/.env
+
+resources
+
+
+.eslintcache

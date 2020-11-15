@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2017",
+    "rootDir": "./src",
+    "baseUrl": ".",
+    "sourceRoot": "./src",
+    "outDir": "./dist",
+    "esModuleInterop": true,
+    "sourceMap": true,
+    "declaration": true,
+    "noImplicitAny": true,
+    "removeComments": true,
+    "skipLibCheck": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importsNotUsedAsValues": "remove",
+    "pretty": true,
+    "paths": {
+      "*": [
+          "node_modules/*",
+          "types/*"
+      ]
+    },
+    "lib": [
+      "es2017",
+      "dom"
+    ]
+  },
+  "include": [
+    "./src"
+  ],
+  "exclude": [
+   "importsort.config.js", 
+    "node_modules"
+  ]
+}
