@@ -1,8 +1,10 @@
-#!/usr/bin/env sh
-
-SCRIPT=$(readlink -f "$0")
-DIR=$(dirname "$SCRIPT")
-
-git pull
-docker-compose -f "$DIR/../docker-compose.prod.yml" pull
-docker-compose -f "$DIR/../docker-compose.prod.yml" up -d 
+coverage
+node_modules
+./**/dist
+./**/build
+!./**/scripts/build
+!./scripts/build
+./**/node_modules
+.git
+db
+docs 
