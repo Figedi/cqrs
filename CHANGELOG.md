@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.1.1](https://github.com/Figedi/cqrs/compare/v1.1.0...v1.1.1) (2020-11-15)
+
+
+### Bug Fixes
+
+* fixes main-path in package.json ([85a611f](https://github.com/Figedi/cqrs/commit/85a611f4a389fef5b8c294a8d10ca6c5fad59924))
+
 ## 1.1.0 (2020-11-15)
 
 
