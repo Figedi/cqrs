@@ -23,7 +23,7 @@ workflows:
           requires:
             - checkout_bump_and_build
 
-      - ci/push_to_npm
+      - ci/push_to_npm:
           name: push_to_npm
           context: ci-default-v1
           image: release
