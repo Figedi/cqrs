@@ -12,7 +12,7 @@ export interface IPersistedEvent<TEventPayload = any, TMeta extends IMeta = IMet
 }
 
 export interface IEventStore {
-  withTransactionalScope(scope: TransactionalScope): IEventStore;
+  withTransactionalScope(scopeProvider: IScopeProvider): IEventStore;
   insert(event: IPersistedEvent): Promise<void>;
   updateByEventId(eventId: string, event: Partial<IPersistedEvent>): Promise<void>;
   findByEventId(eventId: string): Promise<IPersistedEvent>;

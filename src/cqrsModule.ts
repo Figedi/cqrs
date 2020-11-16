@@ -11,6 +11,7 @@ import { TimeBasedEventScheduler } from "./utils/TimeBasedEventScheduler";
 import { ICommandBus, IEventBus, IQueryBus } from "./types";
 import { createWaitUntilIdle } from "./utils/waitUntilIdle";
 import { createWaitUntilSettled } from "./utils/waitUntilSettled";
+import { createScopeProvider } from "./common";
 
 export interface ICQRSSettings {
   persistence: {
@@ -34,11 +35,12 @@ export const createCQRSModule = ({ transaction, persistence }: ICQRSSettings, lo
     commandBus,
   });
 
-  const eventStore = createEventStore(persistenceType);
+  const scopeProvider = createScopeProvider(persistenceType);
+  const eventStore = createEventStore(persistenceType, scopeProvider);
   const waitUntilIdle = createWaitUntilIdle(eventStore);
   const waitUntilSettled = createWaitUntilSettled(eventStore);
 
-  commandBus = createCommandBus(persistenceType, eventStore, logger);
+  commandBus = createCommandBus(persistenceType, eventStore, logger, scopeProvider);
   commandBus.registerDecorator(new LoggingDecorator(logger));
   commandBus.registerDecorator(new UowDecorator(transaction, ctxProvider));
   eventBus = createEventBus(persistenceType, eventStore, ctxProvider, logger);

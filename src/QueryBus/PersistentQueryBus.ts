@@ -29,7 +29,7 @@ export class PersistentQueryBus extends BaseQueryBus implements IQueryBus {
     // eslint-disable-next-line no-param-reassign
     query.meta = { ...query.meta, eventId };
 
-    const store = opts?.scope ? this.eventStore.withTransactionalScope(opts?.scope) : this.eventStore;
+    const store = opts?.scope ? this.eventStore.withTransactionalScope(() => opts!.scope!) : this.eventStore;
 
     try {
       this.in$.next(query); // this makes it available for stream()

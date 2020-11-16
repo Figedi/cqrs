@@ -1,13 +1,12 @@
-import { getManager, In } from "typeorm";
-import { TransactionalScope } from "../types";
+import { In } from "typeorm";
 import { EventEntity } from "./EventEntity";
-import { IEventStore, IPersistedEvent } from "./types";
+import { IEventStore, IPersistedEvent, IScopeProvider } from "./types";
 
 export class PersistentEventStore implements IEventStore {
-  constructor(private em = getManager()) {}
+  constructor(private scopeProvider: IScopeProvider) {}
 
-  public withTransactionalScope(em: TransactionalScope): PersistentEventStore {
-    return new PersistentEventStore(em);
+  public withTransactionalScope(scopeProvider: IScopeProvider): PersistentEventStore {
+    return new PersistentEventStore(scopeProvider);
   }
 
   public async insert(event: IPersistedEvent): Promise<void> {
@@ -37,5 +36,9 @@ export class PersistentEventStore implements IEventStore {
     return (await this.em
       .getRepository(EventEntity)
       .find({ where: { streamId: In(streamIds), type }, select: fields })) as IPersistedEvent[];
+  }
+
+  private get em() {
+    return this.scopeProvider();
   }
 }

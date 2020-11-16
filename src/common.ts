@@ -1,9 +1,11 @@
 import { left } from "fp-ts/lib/Either";
 import { Observable } from "rxjs";
 import { filter } from "rxjs/operators";
+import { getManager } from "typeorm";
 import { v4 as uuid } from "uuid";
 
 import { ApplicationError } from "./errors";
+import { IScopeProvider } from "./infrastructure/types";
 import {
   AnyEither,
   CQRSEventType,
@@ -19,6 +21,13 @@ import {
   ISerializedEvent,
   StringEither,
 } from "./types";
+
+export const createScopeProvider = (persistence: "inmem" | "pg"): IScopeProvider => () => {
+  if (persistence === "pg") {
+    return getManager();
+  }
+  return {} as any;
+};
 
 export const ofType = <TInput extends IEvent, TOutput extends IEvent>(...events: Constructor<TOutput>[]) => {
   const isInstanceOf = (event: IEvent): event is TOutput =>

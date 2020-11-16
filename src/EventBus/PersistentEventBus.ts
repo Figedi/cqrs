@@ -55,7 +55,7 @@ export class PersistentEventBus extends BaseEventBus implements IEventBus {
       return right(streamId) as TRes;
     }
 
-    const store = opts?.scope ? this.eventStore.withTransactionalScope(opts?.scope) : this.eventStore;
+    const store = opts?.scope ? this.eventStore.withTransactionalScope(() => opts!.scope!) : this.eventStore;
 
     try {
       await store.insert({

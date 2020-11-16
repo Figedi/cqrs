@@ -85,7 +85,7 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
     // eslint-disable-next-line no-param-reassign
     command.meta = { ...command.meta, eventId };
 
-    const store = opts?.scope ? this.eventStore.withTransactionalScope(opts?.scope) : this.eventStore;
+    const store = opts?.scope ? this.eventStore.withTransactionalScope(() => opts!.scope!) : this.eventStore;
 
     try {
       await store.insert({
@@ -111,7 +111,7 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
   }
 
   protected async onLeftResult(eventId: string, leftResult: Left<Error>, scope?: TransactionalScope): Promise<void> {
-    const store = scope ? this.eventStore.withTransactionalScope(scope) : this.eventStore;
+    const store = scope ? this.eventStore.withTransactionalScope(() => scope) : this.eventStore;
 
     await store.updateByEventId(eventId, {
       status: "FAILED",
