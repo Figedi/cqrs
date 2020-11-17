@@ -1,5 +1,5 @@
 import { Logger } from "@figedi/svc";
-import { ConnectionOptions, createConnection } from "typeorm";
+import { Connection, ConnectionOptions, createConnection } from "typeorm";
 
 import { createCommandBus } from "./CommandBus";
 import { LoggingDecorator } from "./decorators/LoggingDecorator";
@@ -12,61 +12,83 @@ import { ICommandBus, IEventBus, IQueryBus } from "./types";
 import { createWaitUntilIdle } from "./utils/waitUntilIdle";
 import { createWaitUntilSettled } from "./utils/waitUntilSettled";
 import { createScopeProvider } from "./common";
+import { ApplicationError } from "./errors";
+
+export interface IConnectionProvider {
+  get: () => Connection;
+}
 
 export interface ICQRSSettings {
   persistence: {
     type: "inmem" | "pg";
-    autoCreateConnection?: boolean;
     runMigrations?: boolean;
+    connectionProvider?: IConnectionProvider;
     options?: Record<string, any>;
   };
   transaction: UowTxSettings;
 }
 
-export const createCQRSModule = ({ transaction, persistence }: ICQRSSettings, logger: Logger) => {
-  let commandBus: ICommandBus;
-  let eventBus: IEventBus;
-  let queryBus: IQueryBus;
-  const persistenceType = persistence.type;
+export class CQRSModule {
+  private connection?: Connection;
 
-  const ctxProvider = () => ({
-    queryBus,
-    eventBus,
-    commandBus,
-  });
+  public timeBasedEventScheduler!: TimeBasedEventScheduler;
 
-  const scopeProvider = createScopeProvider(persistenceType);
-  const eventStore = createEventStore(persistenceType, scopeProvider);
-  const waitUntilIdle = createWaitUntilIdle(eventStore);
-  const waitUntilSettled = createWaitUntilSettled(eventStore);
+  public waitUntilIdle!: ReturnType<typeof createWaitUntilIdle>;
 
-  commandBus = createCommandBus(persistenceType, eventStore, logger, scopeProvider);
-  commandBus.registerDecorator(new LoggingDecorator(logger));
-  commandBus.registerDecorator(new UowDecorator(transaction, ctxProvider));
-  eventBus = createEventBus(persistenceType, eventStore, ctxProvider, logger);
-  queryBus = createQuerybus(persistenceType, eventStore, logger);
-  queryBus.registerDecorator(new LoggingDecorator(logger));
-  const timeBasedEventScheduler = new TimeBasedEventScheduler(eventBus, logger);
+  public waitUntilSettled!: ReturnType<typeof createWaitUntilSettled>;
 
-  return {
-    timeBasedEventScheduler,
-    waitUntilIdle,
-    waitUntilSettled,
-    commandBus,
-    eventBus,
-    queryBus,
+  public commandBus!: ICommandBus;
 
-    preflight: async () => {
-      if (persistenceType === "pg") {
-        if (persistence.autoCreateConnection) {
-          const connection = await createConnection(persistence.options as ConnectionOptions);
-          if (persistence.runMigrations) {
-            await connection.runMigrations();
-          }
-        }
-      }
-    },
+  public eventBus!: IEventBus;
+
+  public queryBus!: IQueryBus;
+
+  constructor(private settings: ICQRSSettings, private logger: Logger) {
+    this.init();
+  }
+
+  private init() {
+    const ctxProvider = () => ({
+      queryBus: this.queryBus,
+      eventBus: this.eventBus,
+      commandBus: this.commandBus,
+    });
+
+    const { type } = this.settings.persistence;
+
+    const scopeProvider = createScopeProvider({ type, connectionProvider: this.getConnection });
+    const eventStore = createEventStore(type, scopeProvider);
+    this.waitUntilIdle = createWaitUntilIdle(eventStore);
+    this.waitUntilSettled = createWaitUntilSettled(eventStore);
+
+    this.commandBus = createCommandBus(type, eventStore, this.logger, scopeProvider);
+    this.commandBus.registerDecorator(new LoggingDecorator(this.logger));
+    this.commandBus.registerDecorator(new UowDecorator(this.settings.transaction, ctxProvider));
+    this.eventBus = createEventBus(type, eventStore, ctxProvider, this.logger);
+    this.queryBus = createQuerybus(type, eventStore, this.logger);
+    this.queryBus.registerDecorator(new LoggingDecorator(this.logger));
+    this.timeBasedEventScheduler = new TimeBasedEventScheduler(this.eventBus, this.logger);
+  }
+
+  public async preflight() {
+    if (!this.connection && this.settings.persistence.type === "pg") {
+      this.connection =
+        this.settings.persistence.connectionProvider?.get() ||
+        (await createConnection(this.settings.persistence.options as ConnectionOptions));
+    }
+
+    if (this.settings.persistence.runMigrations && this.connection) {
+      await this.connection.runMigrations();
+    }
+  }
+
+  private getConnection = (): Connection => {
+    if (this.settings.persistence.type !== "pg") {
+      throw new ApplicationError("Cannot get Connection when persistence is not 'pg'");
+    }
+    if (!this.connection) {
+      throw new ApplicationError("No connection found, did you call preflight() already?");
+    }
+    return this.connection;
   };
-};
-
-export type CQRSModule = ReturnType<typeof createCQRSModule>;
+}

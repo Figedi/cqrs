@@ -1,7 +1,7 @@
 import { left } from "fp-ts/lib/Either";
 import { Observable } from "rxjs";
 import { filter } from "rxjs/operators";
-import { getManager } from "typeorm";
+import { Connection } from "typeorm";
 import { v4 as uuid } from "uuid";
 
 import { ApplicationError } from "./errors";
@@ -22,9 +22,14 @@ import {
   StringEither,
 } from "./types";
 
-export const createScopeProvider = (persistence: "inmem" | "pg"): IScopeProvider => () => {
-  if (persistence === "pg") {
-    return getManager();
+interface IScopeOpts {
+  type: "inmem" | "pg";
+  connectionProvider?: () => Connection;
+}
+
+export const createScopeProvider = ({ type, connectionProvider }: IScopeOpts): IScopeProvider => () => {
+  if (type === "pg" && connectionProvider) {
+    return connectionProvider().manager;
   }
   return {} as any;
 };

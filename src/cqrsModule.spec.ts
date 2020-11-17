@@ -8,7 +8,7 @@ import { assert, stub } from "sinon";
 import { getConnection, getManager } from "typeorm";
 
 import { createCommand, createCommandHandler, createEvent, createQuery, createQueryHandler } from "./common";
-import { ICQRSSettings, CQRSModule, createCQRSModule } from "./cqrsModule";
+import { ICQRSSettings, CQRSModule } from "./cqrsModule";
 import { RetriesExceededError, ConfigError } from "./errors";
 import { EventEntity } from "./infrastructure/EventEntity";
 import { ICommand, ICommandBus, IEvent, ISaga, VoidEither } from "./types";
@@ -144,15 +144,15 @@ const txSettings = {
   },
 };
 
-describe.skip("cqrsModule", () => {
+describe("cqrsModule", () => {
   const logger = createStubbedLogger();
   const ID = "42";
 
-  describe("persistence mode = inmem", () => {
+  describe.skip("persistence mode = inmem", () => {
     let cqrsModule: CQRSModule;
 
     beforeEach(async () => {
-      cqrsModule = createCQRSModule({ transaction: txSettings, persistence: { type: "inmem" } }, logger);
+      cqrsModule = new CQRSModule({ transaction: txSettings, persistence: { type: "inmem" } }, logger);
     });
 
     it("should accept commands", async () => {
@@ -185,7 +185,9 @@ describe.skip("cqrsModule", () => {
   });
 
   describe("persistence mode = pg", () => {
-    if (!process.env.DB_CONNECTION_URL || !process.env.DB_CONNECTION_URL.includes("localhost")) {
+    // eslint-disable-next-line max-len
+    const connectionUrl = `postgres://${process.env.PG_USER_NAME}:${process.env.PG_PASSWORD}@localhost/${process.env.PG_DB}`;
+    if (!connectionUrl.includes("localhost")) {
       throw new ConfigError(
         "Please define DB_CONNECTION_URL with LOCALHOST to run integration tests for exampleCommand",
       );
@@ -196,21 +198,19 @@ describe.skip("cqrsModule", () => {
       persistence: {
         type: "pg",
         runMigrations: true,
-        autoCreateConnection: true,
         options: {
           ...baseOrmConfig,
-          url: process.env.DB_CONNECTION_URL,
+          url: connectionUrl,
         },
       },
     };
-    let cqrsModule = createCQRSModule(CQRS_OPTIONS as ICQRSSettings, logger);
+    const cqrsModule = new CQRSModule(CQRS_OPTIONS as ICQRSSettings, logger);
 
     before(async () => {
       await cqrsModule.preflight();
     });
 
     beforeEach(async () => {
-      cqrsModule = createCQRSModule(CQRS_OPTIONS, logger);
       await getConnection().query("TRUNCATE TABLE events");
     });
 
