@@ -77,6 +77,12 @@ export class CQRSModule {
         (await createConnection(this.settings.persistence.options as ConnectionOptions));
     }
 
+    if (this.connection && !this.connection.entityMetadatas.find(entity => entity.name === "EventEntity")) {
+      throw new ApplicationError(
+        "Did not find Entity in the provided connection, did you call injectEntitiesIntoOrmConfig()?",
+      );
+    }
+
     if (this.settings.persistence.runMigrations && this.connection) {
       await this.connection.runMigrations();
     }
