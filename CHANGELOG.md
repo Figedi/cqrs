@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.1.5](https://github.com/Figedi/cqrs/compare/v1.1.4...v1.1.5) (2020-11-18)
+
+
+### Bug Fixes
+
+* adds utility to inject EventEntity into outer ormConfig ([2c76f79](https://github.com/Figedi/cqrs/commit/2c76f7985b06a54e78a473b5b9e3624ddeafddaf))
+
 ### [1.1.4](https://github.com/Figedi/cqrs/compare/v1.1.3...v1.1.4) (2020-11-17)
 
 
