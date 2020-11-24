@@ -1,3 +1,4 @@
+import { serializeError } from "serialize-error";
 import type { Logger } from "@figedi/svc";
 import { left, right } from "fp-ts/lib/Either";
 import { v4 as uuid } from "uuid";
@@ -76,7 +77,7 @@ export class PersistentEventBus extends BaseEventBus implements IEventBus {
         status: "FAILED",
         meta: {
           lastCalled: now,
-          error: e,
+          error: serializeError(e),
         },
       });
 

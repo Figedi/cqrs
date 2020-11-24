@@ -1,3 +1,4 @@
+import type { ErrorObject } from "serialize-error";
 import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
 import { Either } from "fp-ts/lib/Either";
 import { Option } from "fp-ts/lib/Option";
@@ -16,7 +17,7 @@ export interface ISaga<TPayload = any> {
 
 export interface IMeta {
   lastCalled?: Date;
-  error?: Error;
+  error?: Error | ErrorObject;
 }
 export type VoidEither<TError = any> = Either<TError, Option<never>>;
 export type StringEither<TError = any> = Either<TError, string>;
@@ -69,7 +70,7 @@ export interface ICommandBus extends ServiceWithLifecycleHandlers {
   drain(): Promise<void>;
   executeSync<TPayload, TCommandRes extends AnyEither>(
     command: ICommand<TPayload, TCommandRes>,
-    timeout?: number,
+    opts?: ExecuteOpts,
   ): Promise<TCommandRes>;
   execute<TPayload, TRes extends StringEither, TCommandRes extends AnyEither>(
     command: ICommand<TPayload, TCommandRes>,

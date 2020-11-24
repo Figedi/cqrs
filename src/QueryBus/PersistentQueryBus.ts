@@ -1,3 +1,4 @@
+import { serializeError } from "serialize-error";
 import type { Logger } from "@figedi/svc";
 import { isLeft, left } from "fp-ts/lib/Either";
 import { v4 as uuid } from "uuid";
@@ -50,7 +51,7 @@ export class PersistentQueryBus extends BaseQueryBus implements IQueryBus {
         status: "FAILED",
         meta: {
           lastCalled: now,
-          error: e,
+          error: serializeError(e),
         },
       });
 

@@ -31,12 +31,12 @@ export class InMemoryCommandBus extends BaseCommandBus implements ICommandBus {
 
   public async executeSync<T, TRes extends AnyEither, TCommandRes extends AnyEither>(
     command: ICommand<T, TCommandRes>,
-    timeout = 5000,
+    opts?: ExecuteOpts,
   ): Promise<TRes> {
-    const executeResult = await this.execute(command);
+    const executeResult = await this.execute(command, opts);
     if (isLeft(executeResult)) {
       return executeResult as TRes;
     }
-    return this.waitForCommandResult<TRes>(command.meta.className, executeResult.right, timeout);
+    return this.waitForCommandResult<TRes>(command.meta.className, executeResult.right, opts?.timeout || 0);
   }
 }

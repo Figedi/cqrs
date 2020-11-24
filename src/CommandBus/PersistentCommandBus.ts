@@ -1,3 +1,4 @@
+import { serializeError } from "serialize-error";
 import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
 import { Left, isLeft, left, right } from "fp-ts/lib/Either";
 import { Subscription } from "rxjs";
@@ -85,6 +86,11 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
     // eslint-disable-next-line no-param-reassign
     command.meta = { ...command.meta, eventId };
 
+    if (opts?.transient) {
+      this.in$.next({ command, scope: opts?.scope || this.scopeProvider() });
+      return right(streamId) as TRes;
+    }
+
     const store = opts?.scope ? this.eventStore.withTransactionalScope(() => opts!.scope!) : this.eventStore;
 
     try {
@@ -116,7 +122,7 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
     await store.updateByEventId(eventId, {
       status: "FAILED",
       meta: {
-        error: leftResult.left,
+        error: serializeError(leftResult.left),
       },
     });
   }
@@ -140,7 +146,7 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
         status: "FAILED",
         meta: {
           lastCalled: now,
-          error: e,
+          error: serializeError(e),
         },
       });
       return left(e) as TRes;
@@ -149,12 +155,12 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
 
   public async executeSync<T, TRes extends AnyEither, TCommandRes extends AnyEither>(
     command: ICommand<T, TCommandRes>,
-    timeout = 0,
+    opts?: ExecuteOpts,
   ): Promise<TRes> {
-    const executeResult = await this.execute(command);
+    const executeResult = await this.execute(command, opts);
     if (isLeft(executeResult)) {
       return executeResult as TRes;
     }
-    return this.waitForCommandResult<TRes>(command.meta.className, executeResult.right, timeout);
+    return this.waitForCommandResult<TRes>(command.meta.className, executeResult.right, opts?.timeout || 0);
   }
 }

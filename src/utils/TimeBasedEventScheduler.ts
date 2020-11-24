@@ -16,6 +16,8 @@ export class WeekPassed extends createEvent<ITimePassedPayload, StringEither>() 
 export class TimeBasedEventScheduler {
   private jobs: Job[] = [];
 
+  private registeredJobs: [string, Constructor<IEvent>][] = [];
+
   constructor(private eventBus: IEventBus, private logger: Logger) {}
 
   private dispatchEvent = (EventCtor: Constructor<IEvent>) => (): void => {
@@ -24,8 +26,13 @@ export class TimeBasedEventScheduler {
     });
   };
 
+  public registerJob(cronTab: string, EventCtor: Constructor<IEvent>) {
+    this.registeredJobs.push([cronTab, EventCtor]);
+  }
+
   public preflight() {
     this.jobs = [
+      ...this.registeredJobs.map(([crontab, event]) => scheduleJob(crontab, this.dispatchEvent(event))),
       scheduleJob("* * * * *", this.dispatchEvent(MinutePassed)),
       scheduleJob("0 * * * *", this.dispatchEvent(HourPassed)),
       scheduleJob("0 0 * * *", this.dispatchEvent(DayPassed)),
