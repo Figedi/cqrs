@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.1.6](https://github.com/Figedi/cqrs/compare/v1.1.5...v1.1.6) (2020-11-24)
+
+
+### Bug Fixes
+
+* adds transient command handling, serializes errors correctly ([189f913](https://github.com/Figedi/cqrs/commit/189f91319ed5f1f4cd41cda747caf860dac689f2))
+
 ### [1.1.5](https://github.com/Figedi/cqrs/compare/v1.1.4...v1.1.5) (2020-11-18)
 
 
