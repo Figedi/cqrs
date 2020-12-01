@@ -4,12 +4,23 @@ import { isNil } from "lodash";
 import { Observable, Subject, Subscription, defer, merge } from "rxjs";
 import RateLimiter from "rxjs-ratelimiter";
 import { filter, map, mergeMap, retry, share, tap } from "rxjs/operators";
+import { deserializeEvent } from "../common";
 
-import { ConfigError, StreamEndedError, TimeoutExceededError } from "../errors";
-import { AnyEither, ICommand, ICommandHandler, IDecorator, IProcessResult, TransactionalScope } from "../types";
+import { ApplicationError, ConfigError, StreamEndedError, TimeoutExceededError } from "../errors";
+import { IPersistedEvent } from "../infrastructure/types";
+import {
+  AnyEither,
+  Constructor,
+  ICommand,
+  ICommandHandler,
+  IDecorator,
+  IProcessResult,
+  TransactionalScope,
+} from "../types";
 
 interface IInitializedTopicConsumer<O> {
   meta: {
+    handles?: Constructor<ICommand>;
     topic: string;
     maxPerSecond?: number;
     concurrency?: number;
@@ -40,6 +51,15 @@ export class BaseCommandBus {
 
   constructor(protected logger: Logger) {}
 
+  public deserializeCommand(command: IPersistedEvent): ICommand {
+    const registeredTopics = Object.values(this.topics$);
+    const klass = registeredTopics.find(({ meta: { handles } }) => handles?.name === command.eventName)?.meta.handles;
+    if (!klass) {
+      throw new ApplicationError(`Did not find registered command for event ${command.eventName}`);
+    }
+    return deserializeEvent(command.event, klass) as ICommand;
+  }
+
   public registerDecorator = (decorator: IDecorator): void => {
     this.decorators.push(decorator);
   };
@@ -68,6 +88,7 @@ export class BaseCommandBus {
   public register(...handlers: ICommandHandler<any, any>[]) {
     this.topics$ = handlers.reduce((acc, h) => {
       const handlerTopic = h.config.topic;
+
       const decoratedHandler = this.decorateHandler(h);
 
       const { concurrency, maxPerSecond, maxRetries } = decoratedHandler.config || {};
@@ -104,6 +125,7 @@ export class BaseCommandBus {
 
       const handlerConfig = {
         meta: {
+          handles: h.config.handles,
           topic: handlerTopic,
           maxPerSecond,
           concurrency,

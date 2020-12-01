@@ -9,6 +9,7 @@ import { EventIdMissingError } from "../errors";
 import { IEventStore, IScopeProvider } from "../infrastructure/types";
 import {
   AnyEither,
+  Constructor,
   ExecuteOpts,
   ICommand,
   ICommandBus,
@@ -22,7 +23,7 @@ import { BaseCommandBus, IMeteredCommandHandlerResult } from "./BaseCommandBus";
 export class PersistentCommandBus extends BaseCommandBus implements ICommandBus, ServiceWithLifecycleHandlers {
   private pollingSubscription: Subscription;
 
-  private registeredCommands: ICommand[] = [];
+  private registeredCommands: Constructor<ICommand>[] = [];
 
   constructor(logger: Logger, private eventStore: IEventStore, private scopeProvider: IScopeProvider) {
     super(logger);
@@ -110,7 +111,6 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
       return right(streamId) as TRes;
     } catch (e) {
       const result = left(e) as TRes;
-      this.logger.error({ error: e }, `Caught unknown error while processing event ${eventId} `);
       await this.onLeftResult(eventId, result as Left<Error>, opts?.scope);
       return result;
     }

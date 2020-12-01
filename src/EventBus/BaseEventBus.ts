@@ -1,6 +1,9 @@
 import type { ServiceWithLifecycleHandlers } from "@figedi/svc";
 import { Subject, Subscription } from "rxjs";
 import { share } from "rxjs/operators";
+import { deserializeEvent } from "../common";
+import { ApplicationError } from "../errors";
+import { IPersistedEvent } from "../infrastructure/types";
 
 import { ClassContextProvider, Constructor, ExecuteOpts, IEvent, IEventBus, ISaga, StringEither } from "../types";
 
@@ -21,6 +24,14 @@ export abstract class BaseEventBus implements IEventBus, ServiceWithLifecycleHan
       return ignorableSagas.includes(sagaName);
     }
     return false;
+  }
+
+  public deserializeEvent(event: IPersistedEvent): IEvent {
+    const klass = this.registeredEvents.find(registeredEv => registeredEv.name === event.eventName);
+    if (!klass) {
+      throw new ApplicationError(`Did not find registered event for event ${event.eventName}`);
+    }
+    return deserializeEvent(event.event, klass) as IEvent;
   }
 
   public async shutdown() {

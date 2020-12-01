@@ -3,7 +3,7 @@ import type { Logger } from "@figedi/svc";
 import { left, right } from "fp-ts/lib/Either";
 import { v4 as uuid } from "uuid";
 
-import { deserializeEvent, serializeEvent } from "../common";
+import { serializeEvent } from "../common";
 import { IEventStore } from "../infrastructure/types";
 import { ClassContextProvider, ExecuteOpts, IEvent, IEventBus, StringEither } from "../types";
 import { BaseEventBus } from "./BaseEventBus";
@@ -25,15 +25,14 @@ export class PersistentEventBus extends BaseEventBus implements IEventBus {
     const events = await this.eventStore.findByStreamIds(streamIds, undefined, "EVENT");
     const deserializedEvents = events
       .map(ev => {
-        const klass = this.registeredEvents.find(registeredEv => registeredEv.name === ev.eventName);
-        if (klass) {
-          // todo: type this correctly...
-          return deserializeEvent(ev.event, (klass as unknown) as IEvent) as IEvent;
+        try {
+          return this.deserializeEvent(ev);
+        } catch (_error) {
+          this.logger.warn(
+            `Did not find a klass for event ${ev.eventName}. Available are: ${this.registeredEvents.map(e => e.name)}`,
+          );
+          return null;
         }
-        this.logger.warn(
-          `Did not find a klass for event ${ev.eventName}. Available are: ${this.registeredEvents.map(e => e.name)}`,
-        );
-        return null;
       })
       .filter(ev => !!ev) as IEvent[];
     deserializedEvents.forEach(ev => this.in$.next(ev));

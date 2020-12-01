@@ -39,7 +39,7 @@ export class LoggingDecorator implements IDecorator {
         })) as TRes;
         const timeTaken = convertTimingsToMs(process.hrtime(t1));
         if (isLeft(result)) {
-          logger.debug(
+          logger.error(
             { processingTimeMS: timeTaken, error: result.left },
             `Error while processing ${eventType} (${commandOrQuery.meta.className}): ${result.left.message}`,
           );

@@ -49,9 +49,9 @@ export const serializeEvent = <T extends ICommand<TPayload> | IEvent<TPayload> |
 
 export const deserializeEvent = <TPayload>(
   { meta, payload }: ISerializedEvent<TPayload>,
-  klass: ICommand | IQuery | IEvent,
+  Klass: Constructor<ICommand | IQuery | IEvent>,
 ): ICommand<TPayload> | IQuery<TPayload> | IEvent<TPayload> => {
-  const instance = new ((klass as any) as Constructor<ICommand | IQuery | IEvent>)();
+  const instance = new Klass();
   instance.meta = meta;
   instance.payload = payload;
   return instance;
@@ -194,8 +194,8 @@ export const createCommandHandler = <TRes extends AnyEither, Command extends ICo
       this.config = {
         ...(baseConfig || {}),
         classType: CQRSEventType.COMMAND,
-        topic: ((command as any) as Constructor<any>).name,
-        handles: command,
+        topic: ((command as any) as Constructor<Command>).name,
+        handles: (command as any) as Constructor<Command>,
       };
     }
 
@@ -226,8 +226,8 @@ export const createQueryHandler = <TRes extends AnyEither, Query extends IQuery 
       this.config = {
         ...(baseConfig || {}),
         classType: CQRSEventType.QUERY,
-        topic: ((query as any) as Constructor<any>).name,
-        handles: query,
+        topic: ((query as any) as Constructor<Query>).name,
+        handles: (query as any) as Constructor<Query>,
       };
     }
 

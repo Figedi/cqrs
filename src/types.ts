@@ -4,6 +4,7 @@ import { Either } from "fp-ts/lib/Either";
 import { Option } from "fp-ts/lib/Option";
 import { Observable } from "rxjs";
 import { EntityManager } from "typeorm";
+import { IPersistedEvent } from "./infrastructure/types";
 
 export interface IDecorator {
   decorate<T extends ICommand | IQuery, TRes extends AnyEither>(
@@ -34,7 +35,7 @@ export interface IHandlerConfig {
   maxPerSecond?: number;
   concurrency?: number;
   maxRetries?: number;
-  handles?: ICommand | IQuery | IEvent;
+  handles?: Constructor<ICommand | IQuery | IEvent>;
   classType: CQRSEventType;
 }
 
@@ -60,6 +61,7 @@ export interface IProcessResult<TRes> {
 
 export interface IQueryBus extends ServiceWithLifecycleHandlers {
   registerDecorator(decorator: IDecorator): void;
+  deserializeQuery(query: IPersistedEvent): IQuery;
   execute<TPayload, TRes extends AnyEither>(query: IQuery<TPayload, TRes>, opts?: ExecuteOpts): Promise<TRes>;
   register(...handlers: IQueryHandler<any, any>[]): void;
   stream(): Observable<IQuery>;
@@ -68,6 +70,7 @@ export interface IQueryBus extends ServiceWithLifecycleHandlers {
 export interface ICommandBus extends ServiceWithLifecycleHandlers {
   registerDecorator(decorator: IDecorator): void;
   drain(): Promise<void>;
+  deserializeCommand(commands: IPersistedEvent): ICommand;
   executeSync<TPayload, TCommandRes extends AnyEither>(
     command: ICommand<TPayload, TCommandRes>,
     opts?: ExecuteOpts,
@@ -95,6 +98,7 @@ export interface IEventBus extends ServiceWithLifecycleHandlers {
     event: IEvent<TPayload, IEventRes>,
     opts?: ExecuteOpts,
   ): Promise<TRes>;
+  deserializeEvent(event: IPersistedEvent): IEvent;
   replayByStreamIds<TRes extends StringEither>(streamIds: string[]): Promise<TRes[]>;
   register(...events: Constructor<IEvent>[]): void;
   registerSagas(...saga: ISaga[]): void;
