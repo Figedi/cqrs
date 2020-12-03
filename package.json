@@ -16,7 +16,7 @@
     "specs": "mocha --exit --require ts-node/register/transpile-only './src/**/*.spec.ts'"
   },
   "dependencies": {
-    "@figedi/svc": "^0.6.8",
+    "@figedi/svc": "^0.6.9",
     "fp-ts": "^2.8.5",
     "lodash": "^4.17.20",
     "node-schedule": "^1.3.2",

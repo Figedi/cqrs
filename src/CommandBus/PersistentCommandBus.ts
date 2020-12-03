@@ -130,7 +130,7 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
   public async replay<T, TRes extends StringEither, TCommandRes extends VoidEither>(
     command: ICommand<T, TCommandRes>,
   ): Promise<TRes> {
-    const eventId = command.meta?.streamId;
+    const eventId = command.meta?.eventId;
     const streamId = command.meta?.streamId || command.meta?.eventId;
     if (!eventId) {
       throw new EventIdMissingError("Need at least an eventId, was this command properly deserialized?");
