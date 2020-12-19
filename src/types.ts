@@ -91,6 +91,8 @@ export interface ExecuteOpts {
   timeout?: number;
   delayUntilNextTick?: boolean;
   scope?: TransactionalScope;
+  streamId?: string;
+  eventId?: string;
 }
 
 export interface IEventBus extends ServiceWithLifecycleHandlers {

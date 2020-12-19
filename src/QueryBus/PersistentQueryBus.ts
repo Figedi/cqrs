@@ -24,8 +24,8 @@ export class PersistentQueryBus extends BaseQueryBus implements IQueryBus {
       this.logger.error({ error }, error.message);
       throw error;
     }
-    const eventId = query.meta?.eventId || uuid();
-    const streamId = query.meta.streamId || eventId;
+    const eventId = query.meta?.eventId || opts?.eventId || uuid();
+    const streamId = query.meta?.streamId || opts?.streamId || eventId;
     const now = new Date();
     // eslint-disable-next-line no-param-reassign
     query.meta = { ...query.meta, eventId };

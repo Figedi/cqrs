@@ -17,10 +17,10 @@ export class InMemoryEventBus extends BaseEventBus implements IEventBus {
 
   public async execute<T, TRes extends StringEither, IEventRes extends StringEither>(
     event: IEvent<T, IEventRes>,
-    _opts?: ExecuteOpts,
+    opts?: ExecuteOpts,
   ): Promise<TRes> {
-    const eventId = event.meta?.eventId || uuid();
-    const streamId = event.meta?.streamId || eventId;
+    const eventId = event.meta?.eventId || opts?.eventId || uuid();
+    const streamId = event.meta?.streamId || opts?.streamId || eventId;
     // eslint-disable-next-line no-param-reassign
     event.meta = { ...event.meta, eventId };
 

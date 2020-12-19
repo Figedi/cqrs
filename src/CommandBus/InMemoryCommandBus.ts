@@ -11,10 +11,10 @@ export class InMemoryCommandBus extends BaseCommandBus implements ICommandBus {
 
   public async execute<T, TRes extends StringEither, TCommandRes extends VoidEither>(
     command: ICommand<T, TCommandRes>,
-    _opts?: ExecuteOpts,
+    opts?: ExecuteOpts,
   ): Promise<TRes> {
-    const eventId = command.meta?.eventId || uuid();
-    const streamId = command.meta?.streamId || eventId;
+    const eventId = command.meta?.eventId || opts?.eventId || uuid();
+    const streamId = command.meta?.streamId || opts?.streamId || eventId;
     // eslint-disable-next-line no-param-reassign
     command.meta = { ...command.meta, eventId };
 

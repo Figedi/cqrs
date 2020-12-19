@@ -81,8 +81,8 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
   ): Promise<TRes> {
     const delayUntilNextTick = !!opts && opts.delayUntilNextTick;
 
-    const eventId = command.meta?.eventId || uuid();
-    const streamId = command.meta?.streamId || eventId;
+    const eventId = command.meta?.eventId || opts?.eventId || uuid();
+    const streamId = command.meta?.streamId || opts?.streamId || eventId;
     const now = new Date();
     // eslint-disable-next-line no-param-reassign
     command.meta = { ...command.meta, eventId };

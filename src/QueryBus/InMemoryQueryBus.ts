@@ -11,7 +11,7 @@ export class InMemoryQueryBus extends BaseQueryBus implements IQueryBus {
     super();
   }
 
-  public async execute<T, TRes extends AnyEither>(query: IQuery<T, TRes>, _opts?: ExecuteOpts): Promise<TRes> {
+  public async execute<T, TRes extends AnyEither>(query: IQuery<T, TRes>, opts?: ExecuteOpts): Promise<TRes> {
     const topic = query.meta.className;
     const { handler } = this.topics$[topic];
     if (!handler) {
@@ -19,7 +19,7 @@ export class InMemoryQueryBus extends BaseQueryBus implements IQueryBus {
       this.logger.errror({ error }, error.message);
       throw error;
     }
-    const eventId = query.meta?.eventId || uuid();
+    const eventId = query.meta?.eventId || opts?.eventId || uuid();
     // eslint-disable-next-line no-param-reassign
     query.meta = { ...query.meta, eventId };
 
