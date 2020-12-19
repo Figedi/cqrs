@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.0](https://github.com/Figedi/cqrs/compare/v1.1.8...v1.2.0) (2020-12-19)
+
+
+### Features
+
+* adds possibility to execute events/queries/commands via pre-defined ids ([f42a5b4](https://github.com/Figedi/cqrs/commit/f42a5b4dfadf347e1f7b40069ef9264e98c90b6f))
+
 ### [1.1.8](https://github.com/Figedi/cqrs/compare/v1.1.7...v1.1.8) (2020-12-03)
 
 
