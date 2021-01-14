@@ -24,7 +24,6 @@ export class InMemoryQueryBus extends BaseQueryBus implements IQueryBus {
     query.meta = { ...query.meta, eventId };
 
     try {
-      this.in$.next(query);
       const result = await this.handleQuery(handler, query);
 
       return result.payload;

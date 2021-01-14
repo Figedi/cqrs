@@ -30,10 +30,14 @@ export class PersistentQueryBus extends BaseQueryBus implements IQueryBus {
     // eslint-disable-next-line no-param-reassign
     query.meta = { ...query.meta, eventId };
 
+    if (opts?.transient) {
+      const result = await this.handleQuery(topicConfig.handler, query); // directly handle it afterwards
+      return result.payload;
+    }
+
     const store = opts?.scope ? this.eventStore.withTransactionalScope(() => opts!.scope!) : this.eventStore;
 
     try {
-      this.in$.next(query); // this makes it available for stream()
       const result = await this.handleQuery(topicConfig.handler, query); // directly handle it afterwards
       // notes down the outcome of the query for auditing
       await store.insert({

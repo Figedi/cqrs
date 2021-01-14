@@ -1,17 +1,8 @@
 import type { Logger } from "@figedi/svc";
 import { Job, scheduleJob } from "node-schedule";
 
-import { createEvent } from "../common";
-import { Constructor, IEvent, IEventBus, StringEither } from "../types";
-
-export interface ITimePassedPayload {
-  now: Date;
-}
-
-export class MinutePassed extends createEvent<ITimePassedPayload, StringEither>() {}
-export class HourPassed extends createEvent<ITimePassedPayload, StringEither>() {}
-export class DayPassed extends createEvent<ITimePassedPayload, StringEither>() {}
-export class WeekPassed extends createEvent<ITimePassedPayload, StringEither>() {}
+import { Constructor, IEvent, IEventBus } from "../types";
+import { DayPassed, HourPassed, MinutePassed, WeekPassed } from "./internalEvents";
 
 export class TimeBasedEventScheduler {
   private jobs: Job[] = [];

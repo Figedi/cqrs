@@ -1,4 +1,5 @@
 import type { ServiceWithLifecycleHandlers } from "@figedi/svc";
+
 import { Subject, Subscription } from "rxjs";
 import { share } from "rxjs/operators";
 import { deserializeEvent } from "../common";
@@ -6,6 +7,7 @@ import { ApplicationError } from "../errors";
 import { IPersistedEvent } from "../infrastructure/types";
 
 import { ClassContextProvider, Constructor, ExecuteOpts, IEvent, IEventBus, ISaga, StringEither } from "../types";
+import { SagaTriggeredCommandEvent } from "../utils";
 
 export abstract class BaseEventBus implements IEventBus, ServiceWithLifecycleHandlers {
   private readonly sagaSubscriptions: Record<string, Subscription> = {};
@@ -56,6 +58,13 @@ export abstract class BaseEventBus implements IEventBus, ServiceWithLifecycleHan
         const stream$ = saga.process(this.out$);
         const { commandBus } = this.ctxProvider();
         const subscription = stream$.subscribe(command => {
+          this.execute(
+            new SagaTriggeredCommandEvent({
+              sagaName: saga.constructor.name,
+              outgoingEventId: command.meta.eventId,
+              outgoingEventName: command.constructor.name,
+            }),
+          );
           return commandBus.execute(command);
         });
 

@@ -24,6 +24,7 @@ export class BaseQueryBus {
     handler: IQueryHandler<TPayload, TRes>,
     query: TPayload,
   ) => {
+    this.in$.next(query); // makes it available to stream()
     // eslint-disable-next-line prefer-spread
     const result = await handler.handle.apply(handler, [query]);
 
