@@ -46,11 +46,13 @@ export class PersistentEventBus extends BaseEventBus implements IEventBus {
   ): Promise<TRes> {
     const eventId = event.meta?.eventId || opts?.eventId || uuid();
     const streamId = event.meta?.streamId || opts?.streamId || eventId;
+    const transient = event.meta?.transient || opts?.transient;
+
     const now = new Date();
     // eslint-disable-next-line no-param-reassign
     event.meta = { ...event.meta, eventId };
-    const shouldPersist = !opts || !opts.transient;
-    if (!shouldPersist) {
+
+    if (transient) {
       this.in$.next(event);
       return right(streamId) as TRes;
     }

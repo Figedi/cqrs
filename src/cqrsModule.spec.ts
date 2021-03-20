@@ -1,7 +1,9 @@
-import { createStubbedLogger, sleep } from "@figedi/svc";
+import { createLogger, sleep } from "@figedi/svc";
 import { expect } from "chai";
 import { Either, Right, isRight, left, right } from "fp-ts/lib/Either";
 import { Option, none } from "fp-ts/lib/Option";
+import { isLeft } from "fp-ts/lib/These";
+import { times } from "lodash";
 import { Observable } from "rxjs";
 import { map } from "rxjs/operators";
 import { assert, stub } from "sinon";
@@ -11,7 +13,16 @@ import { createCommand, createCommandHandler, createEvent, createQuery, createQu
 import { ICQRSSettings, CQRSModule } from "./cqrsModule";
 import { RetriesExceededError, ConfigError } from "./errors";
 import { EventEntity } from "./infrastructure/EventEntity";
-import { ICommand, ICommandBus, IEvent, ISaga, VoidEither } from "./types";
+import {
+  Constructor,
+  HandlerContext,
+  ICommand,
+  ICommandBus,
+  IEvent,
+  ISaga,
+  TransactionalScope,
+  VoidEither,
+} from "./types";
 
 const baseOrmConfig = require("../ormconfig.js");
 
@@ -34,23 +45,30 @@ const createExampleSaga = (
     }
   };
 
-const createExampleCommandHandler = (cb: (id: string) => void, Command = ExampleCommand, shouldTriggerEvent = true) =>
+const createExampleCommandHandler = <
+  TCommand extends ICommand<TPayload>,
+  TPayload extends { id: string; type: string }
+>(
+  cb: (payload: TPayload, scope: TransactionalScope) => void | Promise<void>,
+  Command: Constructor<TCommand> = (ExampleCommand as unknown) as Constructor<TCommand>,
+  shouldTriggerEvent = true,
+) =>
   class ExampleCommandHandler extends createCommandHandler<any>(Command) {
     constructor() {
       super({
-        maxRetries: 3,
-        maxPerSecond: 3,
+        retries: 3,
+        concurrency: 20,
       });
     }
 
-    public async handle({ payload: { id } }: ExampleCommand): Promise<ExampleCommandResult> {
-      if (id !== "42") {
-        return left(new Error(`42 is the truth to everything. Your id is ${id}`));
+    public async handle({ payload }: TCommand, { scope }: HandlerContext): Promise<ExampleCommandResult> {
+      if (payload.id !== "42") {
+        return left(new Error(`42 is the truth to everything. Your id is ${payload.id}`));
       }
       if (shouldTriggerEvent) {
-        this.apply(new ExampleEvent({ id, type: "type" }));
+        this.apply(new ExampleEvent(payload));
       }
-      cb(id);
+      await cb(payload, scope);
       return right(none);
     }
   };
@@ -145,7 +163,8 @@ const txSettings = {
 };
 
 describe("cqrsModule", () => {
-  const logger = createStubbedLogger();
+  const logger = createLogger({ level: "debug", base: { service: "test", env: "test" }, prettyPrint: false });
+  // const logger = createStubbedLogger();
   const ID = "42";
 
   describe.skip("persistence mode = inmem", () => {
@@ -212,6 +231,39 @@ describe("cqrsModule", () => {
 
     beforeEach(async () => {
       await getConnection().query("TRUNCATE TABLE events");
+    });
+
+    describe.only("UowDecorator", () => {
+      before(async () => {
+        await getConnection().query("CREATE TABLE IF NOT EXISTS test (id int4 UNIQUE, content varchar)");
+      });
+
+      beforeEach(async () => {
+        await getConnection().query("TRUNCATE TABLE test");
+      });
+
+      it("resolves with inserts done concurrently on the same entity", async () => {
+        const cmdCb = async ({ id, type }: { id: string; type: string }, scope: TransactionalScope) => {
+          return scope.query(
+            "INSERT into test (id, content) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET content = excluded.content",
+            [+id, type],
+          );
+        };
+        const ExampleCommandHandler = createExampleCommandHandler(cmdCb, ExampleCommand, false);
+
+        cqrsModule.commandBus.register(new ExampleCommandHandler());
+
+        const results = await Promise.all([
+          ...times(100, i => cqrsModule.commandBus.execute(new ExampleCommand({ id: "42", type: `test${i}` }))),
+        ]);
+
+        if (results.some(isLeft)) {
+          throw new Error("Something went wrong");
+        }
+        const streamIds = (results as Right<string>[]).map(r => r.right);
+        console.log("streamIds", streamIds);
+        await sleep(2000000);
+      }).timeout(5000000);
     });
 
     it("should accept commands", async () => {

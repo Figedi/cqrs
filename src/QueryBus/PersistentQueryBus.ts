@@ -26,11 +26,12 @@ export class PersistentQueryBus extends BaseQueryBus implements IQueryBus {
     }
     const eventId = query.meta?.eventId || opts?.eventId || uuid();
     const streamId = query.meta?.streamId || opts?.streamId || eventId;
+    const transient = query.meta?.transient || opts?.transient;
     const now = new Date();
     // eslint-disable-next-line no-param-reassign
     query.meta = { ...query.meta, eventId };
 
-    if (opts?.transient) {
+    if (transient) {
       const result = await this.handleQuery(topicConfig.handler, query); // directly handle it afterwards
       return result.payload;
     }

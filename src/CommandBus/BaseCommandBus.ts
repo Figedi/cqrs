@@ -1,31 +1,27 @@
 import { Logger, sleep } from "@figedi/svc";
 import { Left, isLeft } from "fp-ts/lib/Either";
-import { isNil } from "lodash";
+import { identity, isNil } from "lodash";
 import { Observable, Subject, Subscription, defer, merge } from "rxjs";
 import RateLimiter from "rxjs-ratelimiter";
 import { filter, map, mergeMap, retry, share, tap } from "rxjs/operators";
-import { deserializeEvent } from "../common";
+import { retryBackoff, RetryBackoffConfig } from "backoff-rxjs";
 
+import { deserializeEvent } from "../common";
 import { ApplicationError, ConfigError, StreamEndedError, TimeoutExceededError } from "../errors";
 import { IPersistedEvent } from "../infrastructure/types";
 import {
   AnyEither,
-  Constructor,
+  IUniformRetryOpts,
   ICommand,
   ICommandHandler,
   IDecorator,
+  IHandlerConfig,
   IProcessResult,
   TransactionalScope,
 } from "../types";
 
 interface IInitializedTopicConsumer<O> {
-  meta: {
-    handles?: Constructor<ICommand>;
-    topic: string;
-    maxPerSecond?: number;
-    concurrency?: number;
-    maxRetries?: number;
-  };
+  meta: Omit<IHandlerConfig<ICommand>, "classType">;
   out$: Observable<O>;
   subscription?: Subscription;
 }
@@ -85,13 +81,30 @@ export class BaseCommandBus {
     handler: ICommandHandler<TPayload, TRes>,
   ) => this.decorators.reduce((acc, decorator) => decorator.decorate(acc), handler) as ICommandHandler<TPayload, TRes>;
 
+  private getRetryMethod = (retriesConfig?: IHandlerConfig["retries"]) => {
+    if (!retriesConfig) {
+      return identity;
+    }
+    if (typeof retriesConfig === "number") {
+      return retry(retriesConfig);
+    }
+
+    if (retriesConfig.mode === "UNIFORM") {
+      if ((retriesConfig.opts as IUniformRetryOpts).maxRetries === undefined) {
+        throw new ApplicationError("Need to provide maxRetries when selection retryConfig UNIFORM");
+      }
+      return retry(retriesConfig.opts!.maxRetries);
+    }
+    return retryBackoff(retriesConfig.opts as RetryBackoffConfig);
+  };
+
   public register(...handlers: ICommandHandler<any, any>[]) {
     this.topics$ = handlers.reduce((acc, h) => {
       const handlerTopic = h.config.topic;
 
       const decoratedHandler = this.decorateHandler(h);
 
-      const { concurrency, maxPerSecond, maxRetries } = decoratedHandler.config || {};
+      const { concurrency, maxPerSecond, retries } = decoratedHandler.config || {};
 
       verifyExclusive(concurrency, maxPerSecond, "Cannot have concurrency and maxPerSecond at the same time");
       const rateLimiter = maxPerSecond ? new RateLimiter(maxPerSecond, 1000) : undefined;
@@ -111,7 +124,7 @@ export class BaseCommandBus {
               rateLimiter.limit(defer(() => this.handleCommand(handler, command, scope))),
             )
           : mergeMap(({ command, scope, handler }) => this.handleCommand(handler, command, scope), concurrency),
-        maxRetries !== undefined ? retry(maxRetries) : ev => ev,
+        this.getRetryMethod(retries),
         tap((result: IMeteredCommandHandlerResult<AnyEither>) => {
           if (!isLeft(result.payload)) {
             return;
@@ -129,7 +142,7 @@ export class BaseCommandBus {
           topic: handlerTopic,
           maxPerSecond,
           concurrency,
-          maxRetries,
+          retries,
         },
         out$,
       };

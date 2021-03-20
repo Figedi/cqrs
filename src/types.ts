@@ -3,6 +3,7 @@ import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
 import { Either } from "fp-ts/lib/Either";
 import { Option } from "fp-ts/lib/Option";
 import { Observable } from "rxjs";
+import { RetryBackoffConfig } from "backoff-rxjs";
 import { EntityManager } from "typeorm";
 import { IPersistedEvent } from "./infrastructure/types";
 
@@ -30,12 +31,19 @@ export interface HandlerContext {
   scope: TransactionalScope;
 }
 
-export interface IHandlerConfig {
+export interface IUniformRetryOpts {
+  maxRetries: number;
+}
+
+export interface IHandlerConfig<THandler = ICommand | IQuery | IEvent> {
+  handles?: Constructor<THandler>;
   topic: string; // this is the className of the Query / Command
   maxPerSecond?: number;
   concurrency?: number;
-  maxRetries?: number;
-  handles?: Constructor<ICommand | IQuery | IEvent>;
+  retries?: number | {
+    mode: "UNIFORM" | "EXPONENTIAL";
+    opts?: RetryBackoffConfig | IUniformRetryOpts;
+  };
   classType: CQRSEventType;
 }
 
@@ -107,45 +115,33 @@ export interface IEventBus extends ServiceWithLifecycleHandlers {
   stream(): Observable<IEvent>;
 }
 
+interface IEventMeta {
+  className: string;
+  classType: CQRSEventType;
+  streamId?: string;
+  eventId?: string;
+  transient?: boolean;
+}
+
 export interface ISerializedEvent<TPayload> {
-  meta: {
-    className: string;
-    classType: CQRSEventType;
-    streamId?: string;
-    eventId?: string;
-  };
+  meta: IEventMeta;
   payload: TPayload;
 }
 
 export interface ICommand<TPayload = any, TRes extends AnyEither = AnyEither> {
-  meta: {
-    className: string;
-    classType: CQRSEventType;
-    streamId?: string;
-    eventId?: string;
-  };
+  meta: IEventMeta;
   payload: TPayload;
   publish(): Promise<TRes>;
 }
 
 export interface IQuery<TPayload = any, TRes extends AnyEither = AnyEither> {
-  meta: {
-    className: string;
-    classType: CQRSEventType;
-    streamId?: string;
-    eventId?: string;
-  };
+  meta: IEventMeta;
   payload: TPayload;
   publish(): Promise<TRes>;
 }
 
 export interface IEvent<TPayload = any, TRes extends StringEither = StringEither> {
-  meta: {
-    className: string;
-    classType: CQRSEventType;
-    streamId?: string;
-    eventId?: string;
-  };
+  meta: IEventMeta;
   payload: TPayload;
   publish(delayUntilNextTick?: boolean): Promise<TRes>;
 }

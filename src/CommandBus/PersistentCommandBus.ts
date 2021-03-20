@@ -79,15 +79,16 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
     command: ICommand<T, TCommandRes>,
     opts?: ExecuteOpts,
   ): Promise<TRes> {
-    const delayUntilNextTick = !!opts && opts.delayUntilNextTick;
+    const delayUntilNextTick = !!opts && opts?.delayUntilNextTick;
 
     const eventId = command.meta?.eventId || opts?.eventId || uuid();
     const streamId = command.meta?.streamId || opts?.streamId || eventId;
+    const transient = command.meta?.transient || opts?.transient;
     const now = new Date();
     // eslint-disable-next-line no-param-reassign
     command.meta = { ...command.meta, eventId };
 
-    if (opts?.transient) {
+    if (transient) {
       this.in$.next({ command, scope: opts?.scope || this.scopeProvider() });
       return right(streamId) as TRes;
     }
