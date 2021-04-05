@@ -1,7 +1,6 @@
-import { Column, Entity, OneToMany, PrimaryColumn } from "typeorm";
+import { Column, Entity, PrimaryColumn } from "typeorm";
 
 import { IMeta, ISerializedEvent } from "../types";
-import { ScheduledEventEntity } from "./ScheduledEventEntity";
 
 @Entity("events")
 export class EventEntity {
@@ -25,9 +24,6 @@ export class EventEntity {
 
   @Column({ name: "type", type: "text" })
   type!: "COMMAND" | "QUERY" | "EVENT";
-
-  @OneToMany(() => ScheduledEventEntity, schedule => schedule.event)
-  schedules?: ScheduledEventEntity[];
 
   @Column({ name: "meta", type: "jsonb", nullable: true })
   meta?: IMeta;

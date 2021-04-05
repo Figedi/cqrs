@@ -107,7 +107,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
   }
 
   public async preflight() {
-    const eventSchedules = await this.eventRepo.find({ where: { status: "CREATED" }, relations: ["event"] });
+    const eventSchedules = await this.eventRepo.find({ where: { status: "CREATED" } });
     if (!eventSchedules.length) {
       return;
     }
