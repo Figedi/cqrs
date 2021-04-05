@@ -258,10 +258,21 @@ describe("cqrsModule", () => {
         timer.tick(100);
         timer.restore();
         await sleep(200);
+        const executedCommands = await getConnection().query(
+          "SELECT event_id, status FROM events WHERE type = 'COMMAND'",
+        );
         assert.calledOnce(cmdCb);
         assert.calledOnce(resultCb);
         assert.calledWith(cmdCb, cmdPayload);
         assert.calledWith(resultCb, right(none));
+        expect(executedCommands[0].event_id).to.eq(scheduledEvents[0].event_id);
+        expect(executedCommands[0].status).to.eq("PROCESSED");
+
+        const result = await getConnection().query(
+          "SELECT status FROM scheduled_events WHERE event->'meta'->>'eventId' = $1",
+          [scheduledEvents[0].event_id],
+        );
+        expect(result[0].status).to.eq("PROCESSED");
       });
 
       it("schedules events, persist them and trigger a command at a specific time (execute)", async () => {
@@ -282,10 +293,22 @@ describe("cqrsModule", () => {
         timer.tick(100);
         timer.restore();
         await sleep(200);
+        const executedCommands = await getConnection().query(
+          "SELECT event_id, status FROM events WHERE type = 'COMMAND'",
+        );
+
         assert.calledOnce(cmdCb);
         assert.calledOnce(resultCb);
         assert.calledWith(cmdCb, cmdPayload);
         assert.calledWith(resultCb, right(command.meta.eventId));
+        expect(executedCommands[0].event_id).to.eq(scheduledEvents[0].event_id);
+        expect(executedCommands[0].status).to.eq("PROCESSED");
+
+        const result = await getConnection().query(
+          "SELECT status FROM scheduled_events WHERE event->'meta'->>'eventId' = $1",
+          [scheduledEvents[0].event_id],
+        );
+        expect(result[0].status).to.eq("PROCESSED");
       });
     });
 
