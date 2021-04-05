@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.0](https://github.com/Figedi/cqrs/compare/v1.2.1...v1.3.0) (2021-04-05)
+
+
+### Features
+
+* adds event scheduler ([595f9a2](https://github.com/Figedi/cqrs/commit/595f9a246609ca4a361ed32460de010f43edb549))
+* adds exponential backoff retry strategy ([5a32c2b](https://github.com/Figedi/cqrs/commit/5a32c2bc2d7557f3872e9e43af50fc1197b92ae2))
+
+
+### Bug Fixes
+
+* adds missing assertings in spec ([4cea3b6](https://github.com/Figedi/cqrs/commit/4cea3b6e033d13c020c035e0772ad2b93e93e7c2))
+
 ### [1.2.1](https://github.com/Figedi/cqrs/compare/v1.2.0...v1.2.1) (2021-01-14)
 
 
