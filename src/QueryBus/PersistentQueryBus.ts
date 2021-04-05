@@ -36,12 +36,10 @@ export class PersistentQueryBus extends BaseQueryBus implements IQueryBus {
       return result.payload;
     }
 
-    const store = opts?.scope ? this.eventStore.withTransactionalScope(() => opts!.scope!) : this.eventStore;
-
     try {
       const result = await this.handleQuery(topicConfig.handler, query); // directly handle it afterwards
       // notes down the outcome of the query for auditing
-      await store.insert({
+      await this.eventStore.insert({
         eventId,
         eventName: query.meta.className,
         streamId,
@@ -52,7 +50,7 @@ export class PersistentQueryBus extends BaseQueryBus implements IQueryBus {
       });
       return result.payload;
     } catch (e) {
-      await store.updateByEventId(eventId, {
+      await this.eventStore.updateByEventId(eventId, {
         status: "FAILED",
         meta: {
           lastCalled: now,

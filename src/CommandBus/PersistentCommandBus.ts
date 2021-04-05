@@ -7,23 +7,11 @@ import { v4 as uuid } from "uuid";
 import { deserializeEvent, serializeEvent } from "../common";
 import { EventIdMissingError } from "../errors";
 import { IEventStore, IScopeProvider } from "../infrastructure/types";
-import {
-  AnyEither,
-  Constructor,
-  ExecuteOpts,
-  ICommand,
-  ICommandBus,
-  ICommandHandler,
-  StringEither,
-  TransactionalScope,
-  VoidEither,
-} from "../types";
+import { AnyEither, ExecuteOpts, ICommand, ICommandBus, ICommandHandler, StringEither, VoidEither } from "../types";
 import { BaseCommandBus, IMeteredCommandHandlerResult } from "./BaseCommandBus";
 
 export class PersistentCommandBus extends BaseCommandBus implements ICommandBus, ServiceWithLifecycleHandlers {
   private pollingSubscription: Subscription;
-
-  private registeredCommands: Constructor<ICommand>[] = [];
 
   constructor(logger: Logger, private eventStore: IEventStore, private scopeProvider: IScopeProvider) {
     super(logger);
@@ -46,7 +34,6 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
 
   public register(...handlers: ICommandHandler<any, any>[]) {
     super.register(...handlers);
-    this.registeredCommands.push(...handlers.map(handler => handler.config.handles!));
     this.topics$ = Object.entries(this.topics$).reduce((acc, [topicName, handlerConfig]) => {
       if (handlerConfig.subscription) {
         return acc;
@@ -93,10 +80,8 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
       return right(streamId) as TRes;
     }
 
-    const store = opts?.scope ? this.eventStore.withTransactionalScope(() => opts!.scope!) : this.eventStore;
-
     try {
-      await store.insert({
+      await this.eventStore.insert({
         eventId,
         eventName: command.meta.className,
         streamId,
@@ -112,15 +97,13 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
       return right(streamId) as TRes;
     } catch (e) {
       const result = left(e) as TRes;
-      await this.onLeftResult(eventId, result as Left<Error>, opts?.scope);
+      await this.onLeftResult(eventId, result as Left<Error>);
       return result;
     }
   }
 
-  protected async onLeftResult(eventId: string, leftResult: Left<Error>, scope?: TransactionalScope): Promise<void> {
-    const store = scope ? this.eventStore.withTransactionalScope(() => scope) : this.eventStore;
-
-    await store.updateByEventId(eventId, {
+  protected async onLeftResult(eventId: string, leftResult: Left<Error>): Promise<void> {
+    await this.eventStore.updateByEventId(eventId, {
       status: "FAILED",
       meta: {
         error: serializeError(leftResult.left),

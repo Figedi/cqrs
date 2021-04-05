@@ -1,5 +1,21 @@
-import { IMeta, ISerializedEvent, TransactionalScope } from "../types";
+import { AnyEither, ExecuteOpts, ICommand, IMeta, ISerializedEvent, StringEither, TransactionalScope } from "../types";
 
+export interface IScheduleOptions extends ExecuteOpts {
+  executeSync?: boolean;
+}
+
+export interface IEventScheduler {
+  scheduleCommand<TPayload extends Record<string, any>, TRes extends AnyEither>(
+    command: ICommand<TPayload, TRes>,
+    executeAt: Date,
+    onExecute?: (result: TRes | StringEither) => Promise<void> | void,
+    executeOpts?: IScheduleOptions,
+  ): Promise<string>;
+
+  updateScheduledEventStatus(command: ICommand, status: "CREATED" | "FAILED" | "PROCESSED"): Promise<void>;
+
+  reset(): Promise<number>;
+}
 export interface IPersistedEvent<TEventPayload = any, TMeta extends IMeta = IMeta> {
   eventId: string;
   eventName: string;

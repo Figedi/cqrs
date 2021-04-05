@@ -6,7 +6,7 @@ module.exports = {
   synchronize: true,
   migrationsRun: true,
   cache: true,
-  logging: true,
+  logging: shouldLog,
   entities: [isProduction ? "dist/**/*Entity.js" : "src/**/*Entity.ts"],
   migrations: [isProduction ? "dist/migrations/*.js" : "src/migrations/*.ts"],
   subscribers: [isProduction ? "dist/subscribers/*.js" : "src/subscribers/*.ts"],

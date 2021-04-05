@@ -24,12 +24,13 @@ import {
 
 interface IScopeOpts {
   type: "inmem" | "pg";
-  connectionProvider?: () => Connection;
+  name?: string;
+  connectionProvider?: (name?: string) => Connection;
 }
 
-export const createScopeProvider = ({ type, connectionProvider }: IScopeOpts): IScopeProvider => () => {
+export const createScopeProvider = ({ name, type, connectionProvider }: IScopeOpts): IScopeProvider => () => {
   if (type === "pg" && connectionProvider) {
-    return connectionProvider().manager;
+    return connectionProvider(name).manager;
   }
   return {} as any;
 };

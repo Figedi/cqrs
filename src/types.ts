@@ -7,6 +7,16 @@ import { RetryBackoffConfig } from "backoff-rxjs";
 import { EntityManager } from "typeorm";
 import { IPersistedEvent } from "./infrastructure/types";
 
+export type ScheduledEventStatus = "CREATED" | "FAILED" | "ABORTED" | "PROCESSED";
+
+export interface IScheduledEvent {
+  scheduledEventId: string;
+  executeAt: Date;
+  eventId: string;
+  event?: ICommand;
+  status: ScheduledEventStatus;
+}
+
 export interface IDecorator {
   decorate<T extends ICommand | IQuery, TRes extends AnyEither>(
     handler: ICommandHandler<T, TRes> | IQueryHandler<T, TRes>,
@@ -40,10 +50,12 @@ export interface IHandlerConfig<THandler = ICommand | IQuery | IEvent> {
   topic: string; // this is the className of the Query / Command
   maxPerSecond?: number;
   concurrency?: number;
-  retries?: number | {
-    mode: "UNIFORM" | "EXPONENTIAL";
-    opts?: RetryBackoffConfig | IUniformRetryOpts;
-  };
+  retries?:
+    | number
+    | {
+        mode: "UNIFORM" | "EXPONENTIAL";
+        opts?: RetryBackoffConfig | IUniformRetryOpts;
+      };
   classType: CQRSEventType;
 }
 
@@ -76,6 +88,8 @@ export interface IQueryBus extends ServiceWithLifecycleHandlers {
 }
 
 export interface ICommandBus extends ServiceWithLifecycleHandlers {
+  registeredCommands: Constructor<ICommand>[];
+
   registerDecorator(decorator: IDecorator): void;
   drain(): Promise<void>;
   deserializeCommand(commands: IPersistedEvent): ICommand;

@@ -18,6 +18,7 @@ import {
   IHandlerConfig,
   IProcessResult,
   TransactionalScope,
+  Constructor,
 } from "../types";
 
 interface IInitializedTopicConsumer<O> {
@@ -39,6 +40,8 @@ const verifyExclusive = (a: any, b: any, help: string) => {
 };
 
 export class BaseCommandBus {
+  public registeredCommands: Constructor<ICommand>[] = [];
+
   protected topics$: Record<string, IInitializedTopicConsumer<any>> = {};
 
   protected decorators: IDecorator[] = [];
@@ -108,6 +111,8 @@ export class BaseCommandBus {
 
       verifyExclusive(concurrency, maxPerSecond, "Cannot have concurrency and maxPerSecond at the same time");
       const rateLimiter = maxPerSecond ? new RateLimiter(maxPerSecond, 1000) : undefined;
+
+      this.registeredCommands.push(h.config.handles!);
 
       const out$ = this.in$.pipe(
         filter(

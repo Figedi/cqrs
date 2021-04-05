@@ -13,7 +13,8 @@
     "format:package-json": "sort-package-json ./package.json",
     "format:prettier": "prettier --write 'src/**/*.{ts,tsx}'",
     "lint": "eslint --ext ts,tsx src",
-    "specs": "env $(cat .env | grep -v \"#\" | xargs) mocha --exit --require ts-node/register/transpile-only './src/**/*.spec.ts'"
+    "specs": "env $(cat .env | grep -v \"#\" | xargs) mocha --exit --require ts-node/register/transpile-only './src/**/*.spec.ts'",
+    "specs:debug": "env $(cat .env | grep -v \"#\" | xargs) NODE_OPTIONS=--inspect-brk mocha --exit --require ts-node/register/transpile-only './src/**/*.spec.ts'"
   },
   "dependencies": {
     "@figedi/svc": "^0.6.9",

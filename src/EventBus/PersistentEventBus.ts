@@ -57,10 +57,8 @@ export class PersistentEventBus extends BaseEventBus implements IEventBus {
       return right(streamId) as TRes;
     }
 
-    const store = opts?.scope ? this.eventStore.withTransactionalScope(() => opts!.scope!) : this.eventStore;
-
     try {
-      await store.insert({
+      await this.eventStore.insert({
         eventId,
         eventName: event.meta.className,
         streamId,
@@ -74,7 +72,7 @@ export class PersistentEventBus extends BaseEventBus implements IEventBus {
 
       return right(streamId) as TRes;
     } catch (e) {
-      await store.updateByEventId(eventId, {
+      await this.eventStore.updateByEventId(eventId, {
         status: "FAILED",
         meta: {
           lastCalled: now,

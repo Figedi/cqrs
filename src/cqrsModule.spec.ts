@@ -4,9 +4,9 @@ import { Either, Right, isRight, left, right } from "fp-ts/lib/Either";
 import { Option, none } from "fp-ts/lib/Option";
 import { isLeft } from "fp-ts/lib/These";
 import { times } from "lodash";
-import { Observable } from "rxjs";
-import { map } from "rxjs/operators";
-import { assert, stub } from "sinon";
+import { EMPTY, Observable, of } from "rxjs";
+import { mergeMap } from "rxjs/operators";
+import Sinon, { assert, stub, useFakeTimers } from "sinon";
 import { getConnection, getManager } from "typeorm";
 
 import { createCommand, createCommandHandler, createEvent, createQuery, createQueryHandler } from "./common";
@@ -19,6 +19,7 @@ import {
   ICommand,
   ICommandBus,
   IEvent,
+  IQuery,
   ISaga,
   TransactionalScope,
   VoidEither,
@@ -27,23 +28,10 @@ import {
 const baseOrmConfig = require("../ormconfig.js");
 
 class ExampleCommand extends createCommand<{ id: string; type: string }>() {}
-class AnotherCommand extends createCommand<{ id: string; type: string }>() {}
 class ExampleEvent extends createEvent<{ id: string; type: string }>() {}
 class ExampleQuery extends createQuery<{ id: string; type: string }, ExampleQueryResult>() {}
 
 type ExampleCommandResult = Either<Error, Option<never>>;
-
-const createExampleSaga = (
-  returnCommand: ICommand = new ExampleCommand({
-    id: "not-42",
-    type: "command",
-  }),
-) =>
-  class ExampleSaga implements ISaga<{ id: string }> {
-    public process(events$: Observable<IEvent<{ id: string }, any>>) {
-      return events$.pipe(map(_ => returnCommand));
-    }
-  };
 
 const createExampleCommandHandler = <
   TCommand extends ICommand<TPayload>,
@@ -74,14 +62,17 @@ const createExampleCommandHandler = <
   };
 type ExampleQueryResult = Either<Error, { id: string; result: number }>;
 
-const createExampleQueryHandler = (cb: (id: string) => void, Query = ExampleQuery) =>
+const createExampleQueryHandler = <TQuery extends IQuery<TPayload>, TPayload extends { id: string; type: string }>(
+  cb: (payload: TPayload) => void,
+  Query: Constructor<TQuery> = (ExampleQuery as unknown) as Constructor<TQuery>,
+) =>
   class ExampleQueryHandler extends createQueryHandler<any>(Query) {
-    public async handle({ payload: { id } }: ExampleCommand): Promise<ExampleQueryResult> {
-      if (id !== "42") {
-        return left(new Error(`42 is the truth to everything. Your id is ${id}`));
+    public async handle({ payload }: ExampleCommand): Promise<ExampleQueryResult> {
+      if (payload.id !== "42") {
+        return left(new Error(`42 is the truth to everything. Your id is ${payload.id}`));
       }
-      cb(id);
-      return right({ id, result: +id * 2 });
+      cb(payload as TPayload);
+      return right({ id: payload.id, result: +payload.id * 2 });
     }
   };
 
@@ -168,38 +159,41 @@ describe("cqrsModule", () => {
   const ID = "42";
 
   describe.skip("persistence mode = inmem", () => {
-    let cqrsModule: CQRSModule;
+    describe("core behaviour", () => {
+      let cqrsModule: CQRSModule;
 
-    beforeEach(async () => {
-      cqrsModule = new CQRSModule({ transaction: txSettings, persistence: { type: "inmem" } }, logger);
-    });
+      beforeEach(async () => {
+        cqrsModule = new CQRSModule({ transaction: txSettings, persistence: { type: "inmem" } }, logger);
+      });
 
-    it("should accept commands", async () => {
-      const cmdCb = stub();
-      const ExampleCommandHandler = createExampleCommandHandler(cmdCb);
-      cqrsModule.commandBus.register(new ExampleCommandHandler());
-      await executeAndWaitForInmemoryCommand(cqrsModule.commandBus, new ExampleCommand({ id: ID, type: "command" }));
-      assert.calledOnce(cmdCb);
-      assert.calledWithExactly(cmdCb, ID);
-    });
+      it("should accept commands", async () => {
+        const cmdCb = stub();
+        const ExampleCommandHandler = createExampleCommandHandler(cmdCb);
+        cqrsModule.commandBus.register(new ExampleCommandHandler());
+        const commandPayload = { id: ID, type: "command" };
+        await executeAndWaitForInmemoryCommand(cqrsModule.commandBus, new ExampleCommand(commandPayload));
+        assert.calledOnce(cmdCb);
+        assert.calledWith(cmdCb, commandPayload);
+      });
 
-    it("should accept queries", async () => {
-      const cmdCb = stub();
-      const ExampleQueryHandler = createExampleQueryHandler(cmdCb);
-      cqrsModule.queryBus.register(new ExampleQueryHandler());
+      it("should accept queries", async () => {
+        const cmdCb = stub();
+        const ExampleQueryHandler = createExampleQueryHandler(cmdCb);
+        cqrsModule.queryBus.register(new ExampleQueryHandler());
+        const queryPayload = { id: ID, type: "command" };
+        const result = await cqrsModule.queryBus.execute(new ExampleQuery(queryPayload));
 
-      const result = await cqrsModule.queryBus.execute(new ExampleQuery({ id: ID, type: "command" }));
+        expect(isRight(result)).to.equal(true);
+        assert.calledOnce(cmdCb);
+        assert.calledWith(cmdCb, queryPayload);
+        expect((result as Right<{ id: string; result: number }>).right.result).to.equal(+ID * 2);
+      });
 
-      expect(isRight(result)).to.equal(true);
-      assert.calledOnce(cmdCb);
-      assert.calledWithExactly(cmdCb, ID);
-      expect((result as Right<{ id: string; result: number }>).right.result).to.equal(+ID * 2);
-    });
+      it("should accept events", async () => {
+        const result = await cqrsModule.eventBus.execute(new ExampleEvent({ id: ID, type: "event" }));
 
-    it("should accept events", async () => {
-      const result = await cqrsModule.eventBus.execute(new ExampleEvent({ id: ID, type: "event" }));
-
-      expect(isRight(result)).to.equal(true);
+        expect(isRight(result)).to.equal(true);
+      });
     });
   });
 
@@ -223,17 +217,79 @@ describe("cqrsModule", () => {
         },
       },
     };
-    const cqrsModule = new CQRSModule(CQRS_OPTIONS as ICQRSSettings, logger);
+    let cqrsModule: CQRSModule;
 
     before(async () => {
+      cqrsModule = new CQRSModule(CQRS_OPTIONS as ICQRSSettings, logger);
       await cqrsModule.preflight();
     });
 
     beforeEach(async () => {
-      await getConnection().query("TRUNCATE TABLE events");
+      await getConnection().query("TRUNCATE TABLE events RESTART IDENTITY CASCADE");
     });
 
-    describe.only("UowDecorator", () => {
+    describe("EventScheduler", () => {
+      let timer: Sinon.SinonFakeTimers;
+      const now = Date.now();
+      beforeEach(async () => {
+        timer = useFakeTimers(now);
+
+        await getConnection().query("TRUNCATE TABLE scheduled_events RESTART IDENTITY CASCADE");
+      });
+
+      afterEach(() => {
+        timer.restore();
+      });
+
+      it("schedules events, persist them and trigger a command at a specific time (executeSync)", async () => {
+        const cmdCb = stub();
+        const resultCb = stub();
+        const ExampleCommandHandler = createExampleCommandHandler(cmdCb);
+        const cmdPayload = { id: ID, type: "command" };
+
+        cqrsModule.commandBus.register(new ExampleCommandHandler());
+        await cqrsModule.eventScheduler.scheduleCommand(new ExampleCommand(cmdPayload), new Date(now + 100), resultCb, {
+          executeSync: true,
+        });
+        const scheduledEvents = await getConnection().query(
+          "SELECT event->'meta'->>'eventId' as event_id FROM scheduled_events",
+        );
+        expect(scheduledEvents).to.have.lengthOf(1);
+        timer.tick(100);
+        timer.restore();
+        await sleep(200);
+        assert.calledOnce(cmdCb);
+        assert.calledOnce(resultCb);
+        assert.calledWith(cmdCb, cmdPayload);
+        assert.calledWith(resultCb, right(none));
+      });
+
+      it("schedules events, persist them and trigger a command at a specific time (execute)", async () => {
+        const cmdCb = stub();
+        const resultCb = stub();
+        const ExampleCommandHandler = createExampleCommandHandler(cmdCb);
+        const cmdPayload = { id: ID, type: "command" };
+
+        cqrsModule.commandBus.register(new ExampleCommandHandler());
+        const command = new ExampleCommand(cmdPayload);
+        await cqrsModule.eventScheduler.scheduleCommand(command, new Date(now + 100), resultCb, {
+          executeSync: false,
+        });
+        const scheduledEvents = await getConnection().query(
+          "SELECT event->'meta'->>'eventId' as event_id FROM scheduled_events",
+        );
+        expect(scheduledEvents).to.have.lengthOf(1);
+        timer.tick(100);
+        timer.restore();
+        await sleep(200);
+        assert.calledOnce(cmdCb);
+        assert.calledOnce(resultCb);
+        assert.calledWith(cmdCb, cmdPayload);
+        assert.calledWith(resultCb, right(command.meta.eventId));
+      });
+    });
+
+    describe("UowDecorator", () => {
       before(async () => {
         await getConnection().query("CREATE TABLE IF NOT EXISTS test (id int4 UNIQUE, content varchar)");
       });
@@ -261,78 +317,101 @@ describe("cqrsModule", () => {
           throw new Error("Something went wrong");
         }
         const streamIds = (results as Right<string>[]).map(r => r.right);
-        console.log("streamIds", streamIds);
-        await sleep(2000000);
-      }).timeout(5000000);
+
+        await cqrsModule.waitUntilIdle(logger, 20000);
+
+        const [{ all_ids: allIds }] = await getConnection().query(
+          "SELECT COUNT(event_id) as all_ids FROM events WHERE type = 'COMMAND'" +
+            ` AND status = 'PROCESSED' AND stream_id IN (${streamIds.map(id => `'${id}'`).join(",")})`,
+        );
+        expect(+allIds).to.equal(streamIds.length);
+      }).timeout(30000);
     });
 
-    it("should accept commands", async () => {
-      const cmdCb = stub();
-      const ExampleCommandHandler = createExampleCommandHandler(cmdCb);
-      cqrsModule.commandBus.register(new ExampleCommandHandler());
-      await executeAndWaitForPersistentCommand(cqrsModule.commandBus, new ExampleCommand({ id: ID, type: "command" }));
-      assert.calledOnce(cmdCb);
-      assert.calledWithExactly(cmdCb, ID);
-      const event = await getManager().getRepository(EventEntity).findOne({ type: "EVENT" });
-      expect(event!.status).to.equal("CREATED");
-      expect(event!.event.payload.id).to.equal(ID);
-    });
+    describe("core behaviour", () => {
+      it("should accept commands", async () => {
+        const cmdCb = stub();
+        const ExampleCommandHandler = createExampleCommandHandler(cmdCb);
+        cqrsModule.commandBus.register(new ExampleCommandHandler());
+        const cmdPayload = { id: ID, type: "command" };
+        await executeAndWaitForPersistentCommand(cqrsModule.commandBus, new ExampleCommand(cmdPayload));
+        assert.calledOnce(cmdCb);
+        assert.calledWith(cmdCb, cmdPayload);
+        const event = await getManager().getRepository(EventEntity).findOne({ type: "EVENT" });
+        expect(event!.status).to.equal("CREATED");
+        expect(event!.event.payload.id).to.equal(ID);
+      });
 
-    it("should accept queries", async () => {
-      const cmdCb = stub();
-      const ExampleQueryHandler = createExampleQueryHandler(cmdCb);
-      cqrsModule.queryBus.register(new ExampleQueryHandler());
+      it("should accept queries", async () => {
+        const cmdCb = stub();
+        const ExampleQueryHandler = createExampleQueryHandler(cmdCb);
+        cqrsModule.queryBus.register(new ExampleQueryHandler());
+        const cmdPayload = { id: ID, type: "command" };
 
-      const result = await cqrsModule.queryBus.execute(new ExampleQuery({ id: ID, type: "command" }));
+        const result = await cqrsModule.queryBus.execute(new ExampleQuery(cmdPayload));
 
-      expect(isRight(result)).to.equal(true);
-      assert.calledOnce(cmdCb);
-      assert.calledWithExactly(cmdCb, ID);
-      expect((result as Right<{ id: string; result: number }>).right.result).to.equal(+ID * 2);
-    });
+        expect(isRight(result)).to.equal(true);
+        assert.calledOnce(cmdCb);
+        assert.calledWith(cmdCb, cmdPayload);
+        expect((result as Right<{ id: string; result: number }>).right.result).to.equal(+ID * 2);
+      });
 
-    it("should accept events", async () => {
-      const result = await cqrsModule.eventBus.execute(new ExampleEvent({ id: ID, type: "event" }));
+      it("should accept events", async () => {
+        const result = await cqrsModule.eventBus.execute(new ExampleEvent({ id: ID, type: "event" }));
 
-      expect(isRight(result)).to.equal(true);
-      const eventId = (result as Right<string>).right;
-      const event = await getManager().getRepository(EventEntity).findOne({ eventId });
-      expect(event!.status).to.equal("CREATED");
-      expect(event!.type).to.equal("EVENT");
-    });
+        expect(isRight(result)).to.equal(true);
+        const eventId = (result as Right<string>).right;
+        const event = await getManager().getRepository(EventEntity).findOne({ eventId });
+        expect(event!.status).to.equal("CREATED");
+        expect(event!.type).to.equal("EVENT");
+      });
 
-    it("works with custom sagas", async () => {
-      /**
-       * scenario:
-       * 1. example-event is triggered
-       * 2. saga 1 is reacting on example-event -> failing command ("not-42")
-       * 3. saga 2 is reacting on example-event -> successful command ("42")
-       * 4. command ("not-42") is handled and fails
-       * 5. command ("42") is handled and succeeds
-       */
-      const FailingSaga = createExampleSaga();
-      const AnotherSaga = createExampleSaga(new AnotherCommand({ id: "42", type: "another-command" }));
-      const CommandHandler = createExampleCommandHandler(() => {}, ExampleCommand, false);
-      const AnotherCommandHandler = createExampleCommandHandler(() => {}, AnotherCommand, false);
-      cqrsModule.commandBus.register(new CommandHandler(), new AnotherCommandHandler());
-      cqrsModule.eventBus.registerSagas(new FailingSaga(), new AnotherSaga());
+      it("works with custom sagas", async () => {
+        /**
+         * scenario:
+         * 1. trigger-event is triggered
+         * 2. saga is reacting on trigger-event -> successful command ("42")
+         * 3. command ("42") is handled and succeeds
+         */
+        const cmdCb = stub();
+        class TriggerEvent extends createEvent<{ id: string; type: string }>() {}
 
-      const result = await cqrsModule.eventBus.execute(new ExampleEvent({ id: ID, type: "event" }));
+        class ExampleSaga implements ISaga<{ id: string }> {
+          public process(events$: Observable<IEvent<{ id: string }, any>>) {
+            return events$.pipe(
+              mergeMap(ev => {
+                if (ev instanceof TriggerEvent) {
+                  return of(new ExampleCommand({ id: ev.payload.id, type: "command" }));
+                }
+                return EMPTY;
+              }),
+            );
+          }
+        }
+        const CommandHandler = createExampleCommandHandler(cmdCb);
+        cqrsModule.commandBus.register(new CommandHandler());
+        cqrsModule.eventBus.registerSagas(new ExampleSaga());
+        /**
+         * note that here we are triggering NOT exampleEvent as it is being triggered upon each command-handler
+         * and would create a recursion
+         */
+        const result = await cqrsModule.eventBus.execute(new TriggerEvent({ id: ID, type: "event" }));
 
-      expect(isRight(result)).to.equal(true);
-      const eventId = (result as Right<string>).right;
-      const event = await getManager().getRepository(EventEntity).findOne({ eventId });
-      expect(event!.status).to.equal("CREATED");
-      expect(event!.type).to.equal("EVENT");
-      await assertWithRetries(
-        async () => {
-          const commands = await getManager().getRepository(EventEntity).find({ type: "COMMAND" });
-          expect(commands.length).to.equal(2);
-          expect(commands.map(command => command.status).sort()).to.deep.equal(["FAILED", "PROCESSED"]);
-        },
-        5,
-        100,
-      );
+        expect(isRight(result)).to.equal(true);
+        const eventId = (result as Right<string>).right;
+        const event = await getManager().getRepository(EventEntity).findOne({ eventId });
+        expect(event!.status).to.equal("CREATED");
+        expect(event!.type).to.equal("EVENT");
+        await assertWithRetries(
+          async () => {
+            const commands = await getManager().getRepository(EventEntity).find({ type: "COMMAND" });
+            expect(commands.length).to.equal(1);
+            expect(commands[0].status).to.equal("PROCESSED");
+          },
+          5,
+          100,
+        );
+      });
     });
   });
 });
