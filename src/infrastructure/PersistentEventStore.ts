@@ -17,8 +17,8 @@ export class PersistentEventStore implements IEventStore {
     await this.em.getRepository(EventEntity).update({ eventId }, event);
   }
 
-  public async findByEventId(eventId: string): Promise<IPersistedEvent> {
-    return (await this.em.getRepository(EventEntity).findOne({ eventId })) as IPersistedEvent;
+  public async findByEventId(eventId: string): Promise<IPersistedEvent | undefined> {
+    return this.em.getRepository(EventEntity).findOne({ eventId });
   }
 
   public async findUnprocessedCommands(fields?: (keyof IPersistedEvent)[]): Promise<IPersistedEvent[]> {

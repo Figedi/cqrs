@@ -14,7 +14,7 @@ import { createWaitUntilSettled } from "./utils/waitUntilSettled";
 import { createScopeProvider } from "./common";
 import { ApplicationError } from "./errors";
 import { createEventScheduler } from "./infrastructure/createEventScheduler";
-import { IEventScheduler } from "./infrastructure/types";
+import { IEventScheduler, IEventStore } from "./infrastructure/types";
 
 export interface IConnectionProvider {
   get: () => Connection;
@@ -47,6 +47,8 @@ export class CQRSModule {
 
   public eventScheduler!: IEventScheduler;
 
+  private eventStore!: IEventStore;
+
   constructor(private settings: ICQRSSettings, private logger: Logger) {
     this.init();
   }
@@ -66,18 +68,30 @@ export class CQRSModule {
       connectionProvider: this.getConnection,
     });
     const scopeProvider = createScopeProvider({ type, connectionProvider: this.getConnection });
-    const eventStore = createEventStore(type, internalScopeProvider);
-    this.waitUntilIdle = createWaitUntilIdle(eventStore);
-    this.waitUntilSettled = createWaitUntilSettled(eventStore);
+    this.eventStore = createEventStore(type, internalScopeProvider);
+    this.waitUntilIdle = createWaitUntilIdle(this.eventStore);
+    this.waitUntilSettled = createWaitUntilSettled(this.eventStore);
 
-    this.commandBus = createCommandBus(type, eventStore, this.logger, scopeProvider);
-    this.eventBus = createEventBus(type, eventStore, ctxProvider, this.logger);
-    this.queryBus = createQuerybus(type, eventStore, this.logger);
+    this.commandBus = createCommandBus(type, this.eventStore, this.logger, scopeProvider);
+    this.eventBus = createEventBus(type, this.eventStore, ctxProvider, this.logger);
+    this.queryBus = createQuerybus(type, this.eventStore, this.logger);
     this.commandBus.registerDecorator(new LoggingDecorator(this.logger));
     this.commandBus.registerDecorator(new UowDecorator(this.settings.transaction, ctxProvider));
     this.queryBus.registerDecorator(new LoggingDecorator(this.logger));
     this.timeBasedEventScheduler = new TimeBasedEventScheduler(this.eventBus, this.logger);
     this.eventScheduler = createEventScheduler(type, scopeProvider, this.commandBus, this.logger);
+  }
+
+  public async status(params: { eventId?: string; streamId?: string }) {
+    if (!params.eventId && !params.streamId) {
+      throw new ApplicationError("Need to provide at least one eventId or streamId to retrieve status");
+    }
+    if (params.eventId) {
+      return this.eventStore.findByEventId(params.eventId);
+    }
+    const events = await this.eventStore.findByStreamIds([params.streamId!]);
+
+    return events[0];
   }
 
   public async preflight() {

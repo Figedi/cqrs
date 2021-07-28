@@ -31,7 +31,7 @@ export interface IEventStore {
   withTransactionalScope(scopeProvider: IScopeProvider): IEventStore;
   insert(event: IPersistedEvent): Promise<void>;
   updateByEventId(eventId: string, event: Partial<IPersistedEvent>): Promise<void>;
-  findByEventId(eventId: string): Promise<IPersistedEvent>;
+  findByEventId(eventId: string): Promise<IPersistedEvent | undefined>;
   findUnprocessedCommands<TKeys extends keyof IPersistedEvent>(
     fields?: TKeys[],
   ): Promise<Pick<IPersistedEvent, TKeys>[]>;
