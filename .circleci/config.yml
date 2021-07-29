@@ -1,6 +1,6 @@
 version: 2.1
 orbs:
-  ci: figedi/ci@dev:1a8500c
+  ci: figedi/ci@0.1.1
     
 workflows:
   ci:

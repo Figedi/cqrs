@@ -17,8 +17,10 @@ export class PersistentEventStore implements IEventStore {
     await this.em.getRepository(EventEntity).update({ eventId }, event);
   }
 
-  public async findByEventId(eventId: string): Promise<IPersistedEvent | undefined> {
-    return this.em.getRepository(EventEntity).findOne({ eventId });
+  public async findByEventIds(eventIds: string[], fields?: (keyof IPersistedEvent)[]): Promise<IPersistedEvent[]> {
+    return this.em
+      .getRepository(EventEntity)
+      .find({ where: { eventId: In(eventIds) }, ...(fields ? { select: fields } : {}) });
   }
 
   public async findUnprocessedCommands(fields?: (keyof IPersistedEvent)[]): Promise<IPersistedEvent[]> {
@@ -33,9 +35,10 @@ export class PersistentEventStore implements IEventStore {
     fields?: (keyof IPersistedEvent)[],
     type?: IPersistedEvent["type"],
   ): Promise<IPersistedEvent[]> {
-    return (await this.em
-      .getRepository(EventEntity)
-      .find({ where: { streamId: In(streamIds), type }, select: fields })) as IPersistedEvent[];
+    return (await this.em.getRepository(EventEntity).find({
+      where: { streamId: In(streamIds), ...(type ? { type } : {}) },
+      ...(fields ? { select: fields } : {}),
+    })) as IPersistedEvent[];
   }
 
   private get em() {
