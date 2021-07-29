@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.3.2](https://github.com/Figedi/cqrs/compare/v1.3.1...v1.3.2) (2021-07-29)
+
+
+### Bug Fixes
+
+* status w/ multiple eventIds/streamIds ([c3f544a](https://github.com/Figedi/cqrs/commit/c3f544a8b929219bbb0da598337ddd9ae805803a))
+
 ### [1.3.1](https://github.com/Figedi/cqrs/compare/v1.3.0...v1.3.1) (2021-07-28)
 
 
