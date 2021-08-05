@@ -1,6 +1,6 @@
 {
   "name": "@figedi/cqrs",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Yet another cqrs implementation",
   "license": "MIT",
   "author": "Felix Kaminski",
