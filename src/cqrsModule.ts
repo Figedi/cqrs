@@ -14,7 +14,7 @@ import { createWaitUntilSettled } from "./utils/waitUntilSettled";
 import { createScopeProvider } from "./common";
 import { ApplicationError } from "./errors";
 import { createEventScheduler } from "./infrastructure/createEventScheduler";
-import { IEventScheduler, IEventStore, IPersistedEvent } from "./infrastructure/types";
+import { EventTypes, IEventScheduler, IEventStore, IPersistedEvent } from "./infrastructure/types";
 
 export interface IConnectionProvider {
   get: () => Connection;
@@ -82,14 +82,18 @@ export class CQRSModule {
     this.eventScheduler = createEventScheduler(type, scopeProvider, this.commandBus, this.logger);
   }
 
-  public async status(params: { eventIds?: string[]; streamIds?: string[] }): Promise<IPersistedEvent[]> {
+  public async status(params: {
+    eventIds?: string[];
+    streamIds?: string[];
+    type?: EventTypes;
+  }): Promise<IPersistedEvent[]> {
     if (!params.eventIds?.length && !params.streamIds?.length) {
       throw new ApplicationError("Need to provide at least one eventId or streamId to retrieve status");
     }
     if (params.eventIds?.length) {
-      return this.eventStore.findByEventIds(params.eventIds);
+      return this.eventStore.findByEventIds(params.eventIds, undefined, params.type);
     }
-    return this.eventStore.findByStreamIds(params.streamIds!);
+    return this.eventStore.findByStreamIds(params.streamIds!, undefined, params.type);
   }
 
   public async preflight() {

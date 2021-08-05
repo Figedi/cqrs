@@ -1,6 +1,7 @@
 import { Column, Entity, PrimaryColumn } from "typeorm";
 
 import { IMeta, ISerializedEvent } from "../types";
+import { EventTypes } from "./types";
 
 @Entity("events")
 export class EventEntity {
@@ -23,7 +24,7 @@ export class EventEntity {
   status!: "CREATED" | "PROCESSING" | "FAILED" | "PROCESSED";
 
   @Column({ name: "type", type: "text" })
-  type!: "COMMAND" | "QUERY" | "EVENT";
+  type!: EventTypes;
 
   @Column({ name: "meta", type: "jsonb", nullable: true })
   meta?: IMeta;

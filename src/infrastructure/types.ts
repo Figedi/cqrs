@@ -16,6 +16,8 @@ export interface IEventScheduler {
 
   reset(): Promise<number>;
 }
+
+export type EventTypes = "COMMAND" | "QUERY" | "EVENT";
 export interface IPersistedEvent<TEventPayload = any, TMeta extends IMeta = IMeta> {
   eventId: string;
   eventName: string;
@@ -23,7 +25,7 @@ export interface IPersistedEvent<TEventPayload = any, TMeta extends IMeta = IMet
   event: ISerializedEvent<TEventPayload>;
   timestamp: Date;
   status: "CREATED" | "PROCESSING" | "FAILED" | "PROCESSED";
-  type: "COMMAND" | "QUERY" | "EVENT";
+  type: EventTypes;
   meta?: TMeta;
 }
 
@@ -37,11 +39,12 @@ export interface IEventStore {
   findByEventIds<TKeys extends keyof IPersistedEvent>(
     eventIds: string[],
     fields?: TKeys[],
+    type?: EventTypes,
   ): Promise<Pick<IPersistedEvent, TKeys>[]>;
   findByStreamIds<TKeys extends keyof IPersistedEvent>(
     streamIds: string[],
     fields?: TKeys[],
-    type?: IPersistedEvent["type"],
+    type?: EventTypes,
   ): Promise<Pick<IPersistedEvent, TKeys>[]>;
 }
 

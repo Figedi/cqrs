@@ -1,6 +1,7 @@
 import { In } from "typeorm";
+import { omitBy, isNil } from "lodash";
 import { EventEntity } from "./EventEntity";
-import { IEventStore, IPersistedEvent, IScopeProvider } from "./types";
+import { EventTypes, IEventStore, IPersistedEvent, IScopeProvider } from "./types";
 
 export class PersistentEventStore implements IEventStore {
   constructor(private scopeProvider: IScopeProvider) {}
@@ -17,10 +18,14 @@ export class PersistentEventStore implements IEventStore {
     await this.em.getRepository(EventEntity).update({ eventId }, event);
   }
 
-  public async findByEventIds(eventIds: string[], fields?: (keyof IPersistedEvent)[]): Promise<IPersistedEvent[]> {
+  public async findByEventIds(
+    eventIds: string[],
+    fields?: (keyof IPersistedEvent)[],
+    type?: EventTypes,
+  ): Promise<IPersistedEvent[]> {
     return this.em
       .getRepository(EventEntity)
-      .find({ where: { eventId: In(eventIds) }, ...(fields ? { select: fields } : {}) });
+      .find({ where: omitBy({ eventId: In(eventIds), type }, isNil), ...(fields ? { select: fields } : {}) });
   }
 
   public async findUnprocessedCommands(fields?: (keyof IPersistedEvent)[]): Promise<IPersistedEvent[]> {
@@ -33,10 +38,10 @@ export class PersistentEventStore implements IEventStore {
   public async findByStreamIds(
     streamIds: string[],
     fields?: (keyof IPersistedEvent)[],
-    type?: IPersistedEvent["type"],
+    type?: EventTypes,
   ): Promise<IPersistedEvent[]> {
     return (await this.em.getRepository(EventEntity).find({
-      where: { streamId: In(streamIds), ...(type ? { type } : {}) },
+      where: omitBy({ streamId: In(streamIds), type }, isNil),
       ...(fields ? { select: fields } : {}),
     })) as IPersistedEvent[];
   }
