@@ -197,7 +197,7 @@ export class UowDecorator implements IDecorator {
             // execute the finally block before the return
             await queryRunner.manager.release();
             await queryRunner.release();
-            return processInTx(tries + 1);
+            return await processInTx(tries + 1);
           }
           return left(e) as TRes;
         } finally {

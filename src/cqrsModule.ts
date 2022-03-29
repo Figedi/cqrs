@@ -1,5 +1,5 @@
 import { Logger } from "@figedi/svc";
-import { Connection, ConnectionOptions, createConnection } from "typeorm";
+import { DataSource, DataSourceOptions } from "typeorm";
 
 import { createCommandBus } from "./CommandBus";
 import { LoggingDecorator } from "./decorators/LoggingDecorator";
@@ -17,7 +17,7 @@ import { createEventScheduler } from "./infrastructure/createEventScheduler";
 import { EventTypes, IEventScheduler, IEventStore, IPersistedEvent } from "./infrastructure/types";
 
 export interface IConnectionProvider {
-  get: () => Connection;
+  get: () => DataSource;
 }
 
 export interface ICQRSSettings {
@@ -31,7 +31,7 @@ export interface ICQRSSettings {
 }
 
 export class CQRSModule {
-  private connections: Record<string, Connection> = {};
+  private connections: Record<string, DataSource> = {};
 
   public timeBasedEventScheduler!: TimeBasedEventScheduler;
 
@@ -98,18 +98,17 @@ export class CQRSModule {
 
   public async preflight() {
     if (Object.keys(this.connections).length === 0 && this.settings.persistence.type === "pg") {
-      const connectionOptions = this.settings.persistence.options as ConnectionOptions;
+      const connectionOptions = this.settings.persistence.options as DataSourceOptions;
       const mainConnection =
-        this.settings.persistence.connectionProvider?.get() || (await createConnection(connectionOptions));
+        this.settings.persistence.connectionProvider?.get() || (await new DataSource(connectionOptions).initialize());
 
-      const internalConnection = await createConnection({
+      const internalConnection = await new DataSource({
         ...connectionOptions,
-        name: "__internal__",
         extra: { poolSize: 5 },
-      });
+      }).initialize();
 
       this.connections = {
-        [internalConnection.name]: internalConnection,
+        __internal__: internalConnection,
         default: mainConnection,
       };
     }
@@ -127,7 +126,7 @@ export class CQRSModule {
     }
   }
 
-  private getConnection = (name?: string): Connection => {
+  private getConnection = (name?: string): DataSource => {
     if (this.settings.persistence.type !== "pg") {
       throw new ApplicationError("Cannot get Connection when persistence is not 'pg'");
     }

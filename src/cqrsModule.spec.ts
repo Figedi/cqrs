@@ -7,12 +7,13 @@ import { times } from "lodash";
 import { EMPTY, Observable, of } from "rxjs";
 import { mergeMap } from "rxjs/operators";
 import Sinon, { assert, stub, useFakeTimers } from "sinon";
-import { getConnection, getManager } from "typeorm";
+import { DataSource } from "typeorm";
 
 import { createCommand, createCommandHandler, createEvent, createQuery, createQueryHandler } from "./common";
 import { ICQRSSettings, CQRSModule } from "./cqrsModule";
 import { RetriesExceededError, ConfigError } from "./errors";
 import { EventEntity } from "./infrastructure/EventEntity";
+import { ScheduledEventEntity } from "./infrastructure/ScheduledEventEntity";
 import {
   Constructor,
   HandlerContext,
@@ -35,10 +36,10 @@ type ExampleCommandResult = Either<Error, Option<never>>;
 
 const createExampleCommandHandler = <
   TCommand extends ICommand<TPayload>,
-  TPayload extends { id: string; type: string }
+  TPayload extends { id: string; type: string },
 >(
   cb: (payload: TPayload, scope: TransactionalScope) => void | Promise<void>,
-  Command: Constructor<TCommand> = (ExampleCommand as unknown) as Constructor<TCommand>,
+  Command: Constructor<TCommand> = ExampleCommand as unknown as Constructor<TCommand>,
   shouldTriggerEvent = true,
 ) =>
   class ExampleCommandHandler extends createCommandHandler<any>(Command) {
@@ -64,7 +65,7 @@ type ExampleQueryResult = Either<Error, { id: string; result: number }>;
 
 const createExampleQueryHandler = <TQuery extends IQuery<TPayload>, TPayload extends { id: string; type: string }>(
   cb: (payload: TPayload) => void,
-  Query: Constructor<TQuery> = (ExampleQuery as unknown) as Constructor<TQuery>,
+  Query: Constructor<TQuery> = ExampleQuery as unknown as Constructor<TQuery>,
 ) =>
   class ExampleQueryHandler extends createQueryHandler<any>(Query) {
     public async handle({ payload }: ExampleCommand): Promise<ExampleQueryResult> {
@@ -90,6 +91,7 @@ const assertWithRetries = async (fn: () => Promise<void>, retries = 3, sleepBetw
 };
 
 const executeAndWaitForPersistentCommand = async <T, TRes extends VoidEither>(
+  dataSource: DataSource,
   commandBus: ICommandBus,
   command: ICommand<T, TRes>,
 ) => {
@@ -112,7 +114,7 @@ const executeAndWaitForPersistentCommand = async <T, TRes extends VoidEither>(
   const response = await event$;
   expect(isRight(response)).to.equal(true);
   await assertWithRetries(async () => {
-    const event = await getManager().getRepository(EventEntity).findOne({ eventId: respId });
+    const event = await dataSource.manager.getRepository(EventEntity).findOne({ where: { eventId: respId } });
     expect(event!.status).to.equal("PROCESSED");
   });
   return response;
@@ -151,6 +153,16 @@ const txSettings = {
     min: 100,
     max: 5000,
   },
+};
+
+const createConnection = async (connectionUrl: string) => {
+  const dataSource = new DataSource({
+    type: "postgres",
+    url: connectionUrl,
+    entities: [EventEntity, ScheduledEventEntity],
+  });
+  await dataSource.initialize();
+  return dataSource;
 };
 
 describe("cqrsModule", () => {
@@ -205,6 +217,7 @@ describe("cqrsModule", () => {
         "Please define DB_CONNECTION_URL with LOCALHOST to run integration tests for exampleCommand",
       );
     }
+    let dataSource: DataSource;
     const CQRS_OPTIONS: ICQRSSettings = {
       transaction: txSettings,
 
@@ -225,7 +238,12 @@ describe("cqrsModule", () => {
     });
 
     beforeEach(async () => {
-      await getConnection().query("TRUNCATE TABLE events RESTART IDENTITY CASCADE");
+      dataSource = await createConnection(connectionUrl);
+      await dataSource.query("TRUNCATE TABLE events RESTART IDENTITY CASCADE");
+    });
+
+    afterEach(async () => {
+      await dataSource?.destroy();
     });
 
     describe("EventScheduler", () => {
@@ -234,7 +252,7 @@ describe("cqrsModule", () => {
       beforeEach(async () => {
         timer = useFakeTimers(now);
 
-        await getConnection().query("TRUNCATE TABLE scheduled_events RESTART IDENTITY CASCADE");
+        await dataSource.query("TRUNCATE TABLE scheduled_events RESTART IDENTITY CASCADE");
       });
 
       afterEach(() => {
@@ -251,16 +269,14 @@ describe("cqrsModule", () => {
         await cqrsModule.eventScheduler.scheduleCommand(new ExampleCommand(cmdPayload), new Date(now + 100), resultCb, {
           executeSync: true,
         });
-        const scheduledEvents = await getConnection().query(
+        const scheduledEvents = await dataSource.query(
           "SELECT event->'meta'->>'eventId' as event_id FROM scheduled_events",
         );
         expect(scheduledEvents).to.have.lengthOf(1);
         timer.tick(100);
         timer.restore();
         await sleep(200);
-        const executedCommands = await getConnection().query(
-          "SELECT event_id, status FROM events WHERE type = 'COMMAND'",
-        );
+        const executedCommands = await dataSource.query("SELECT event_id, status FROM events WHERE type = 'COMMAND'");
         assert.calledOnce(cmdCb);
         assert.calledOnce(resultCb);
         assert.calledWith(cmdCb, cmdPayload);
@@ -268,7 +284,7 @@ describe("cqrsModule", () => {
         expect(executedCommands[0].event_id).to.eq(scheduledEvents[0].event_id);
         expect(executedCommands[0].status).to.eq("PROCESSED");
 
-        const result = await getConnection().query(
+        const result = await dataSource.query(
           "SELECT status FROM scheduled_events WHERE event->'meta'->>'eventId' = $1",
           [scheduledEvents[0].event_id],
         );
@@ -286,16 +302,14 @@ describe("cqrsModule", () => {
         await cqrsModule.eventScheduler.scheduleCommand(command, new Date(now + 100), resultCb, {
           executeSync: false,
         });
-        const scheduledEvents = await getConnection().query(
+        const scheduledEvents = await dataSource.query(
           "SELECT event->'meta'->>'eventId' as event_id FROM scheduled_events",
         );
         expect(scheduledEvents).to.have.lengthOf(1);
         timer.tick(100);
         timer.restore();
         await sleep(200);
-        const executedCommands = await getConnection().query(
-          "SELECT event_id, status FROM events WHERE type = 'COMMAND'",
-        );
+        const executedCommands = await dataSource.query("SELECT event_id, status FROM events WHERE type = 'COMMAND'");
 
         assert.calledOnce(cmdCb);
         assert.calledOnce(resultCb);
@@ -304,7 +318,7 @@ describe("cqrsModule", () => {
         expect(executedCommands[0].event_id).to.eq(scheduledEvents[0].event_id);
         expect(executedCommands[0].status).to.eq("PROCESSED");
 
-        const result = await getConnection().query(
+        const result = await dataSource.query(
           "SELECT status FROM scheduled_events WHERE event->'meta'->>'eventId' = $1",
           [scheduledEvents[0].event_id],
         );
@@ -313,12 +327,9 @@ describe("cqrsModule", () => {
     });
 
     describe("UowDecorator", () => {
-      before(async () => {
-        await getConnection().query("CREATE TABLE IF NOT EXISTS test (id int4 UNIQUE, content varchar)");
-      });
-
       beforeEach(async () => {
-        await getConnection().query("TRUNCATE TABLE test");
+        await dataSource.query("CREATE TABLE IF NOT EXISTS test (id int4 UNIQUE, content varchar)");
+        await dataSource.query("TRUNCATE TABLE test");
       });
 
       it("resolves with inserts done concurrently on the same entity", async () => {
@@ -343,7 +354,7 @@ describe("cqrsModule", () => {
 
         await cqrsModule.waitUntilIdle(logger, 20000);
 
-        const [{ all_ids: allIds }] = await getConnection().query(
+        const [{ all_ids: allIds }] = await dataSource.query(
           "SELECT COUNT(event_id) as all_ids FROM events WHERE type = 'COMMAND'" +
             ` AND status = 'PROCESSED' AND stream_id IN (${streamIds.map(id => `'${id}'`).join(",")})`,
         );
@@ -357,10 +368,10 @@ describe("cqrsModule", () => {
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb);
         cqrsModule.commandBus.register(new ExampleCommandHandler());
         const cmdPayload = { id: ID, type: "command" };
-        await executeAndWaitForPersistentCommand(cqrsModule.commandBus, new ExampleCommand(cmdPayload));
+        await executeAndWaitForPersistentCommand(dataSource, cqrsModule.commandBus, new ExampleCommand(cmdPayload));
         assert.calledOnce(cmdCb);
         assert.calledWith(cmdCb, cmdPayload);
-        const event = await getManager().getRepository(EventEntity).findOne({ type: "EVENT" });
+        const event = await dataSource.manager.getRepository(EventEntity).findOne({ where: { type: "EVENT" } });
         expect(event!.status).to.equal("CREATED");
         expect(event!.event.payload.id).to.equal(ID);
       });
@@ -384,7 +395,7 @@ describe("cqrsModule", () => {
 
         expect(isRight(result)).to.equal(true);
         const eventId = (result as Right<string>).right;
-        const event = await getManager().getRepository(EventEntity).findOne({ eventId });
+        const event = await dataSource.manager.getRepository(EventEntity).findOne({ where: { eventId } });
         expect(event!.status).to.equal("CREATED");
         expect(event!.type).to.equal("EVENT");
       });
@@ -422,12 +433,12 @@ describe("cqrsModule", () => {
 
         expect(isRight(result)).to.equal(true);
         const eventId = (result as Right<string>).right;
-        const event = await getManager().getRepository(EventEntity).findOne({ eventId });
+        const event = await dataSource.manager.getRepository(EventEntity).findOne({ where: { eventId } });
         expect(event!.status).to.equal("CREATED");
         expect(event!.type).to.equal("EVENT");
         await assertWithRetries(
           async () => {
-            const commands = await getManager().getRepository(EventEntity).find({ type: "COMMAND" });
+            const commands = await dataSource.manager.getRepository(EventEntity).find({ where: { type: "COMMAND" } });
             expect(commands.length).to.equal(1);
             expect(commands[0].status).to.equal("PROCESSED");
           },

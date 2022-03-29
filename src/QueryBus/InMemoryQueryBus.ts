@@ -16,7 +16,7 @@ export class InMemoryQueryBus extends BaseQueryBus implements IQueryBus {
     const { handler } = this.topics$[topic];
     if (!handler) {
       const error = new NoHandlerFoundError(`No handler found for topic: ${topic}`);
-      this.logger.errror({ error }, error.message);
+      this.logger.error({ error }, error.message);
       throw error;
     }
     const eventId = query.meta?.eventId || opts?.eventId || uuid();

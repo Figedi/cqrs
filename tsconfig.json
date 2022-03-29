@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "module": "commonjs",
-    "target": "es2017",
+    "target": "es2021",
     "rootDir": "./src",
     "baseUrl": ".",
     "sourceRoot": "./src",
@@ -28,12 +28,11 @@
       ]
     },
     "lib": [
-      "es2017",
+      "es2021",
       "dom"
     ]
   },
-  "include": [
-    "./src"
+  "include": ["./src"
   ],
   "exclude": [
    "importsort.config.js", 
