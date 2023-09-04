@@ -1,16 +1,16 @@
 import type { Logger } from "@figedi/svc";
-import { isLeft } from "fp-ts/lib/Either";
+import { isLeft } from "fp-ts/lib/Either.js";
 
-import {
+import type {
   AnyEither,
-  CQRSEventType,
   HandlerContext,
   ICommand,
   ICommandHandler,
   IDecorator,
   IQuery,
   IQueryHandler,
-} from "../types";
+} from "../types.js";
+import { CQRSEventType } from "../types.js";
 
 export const convertTimingsToMs = ([seconds, nanoseconds]: number[]): number =>
   ((seconds * 1e9 + nanoseconds) / 1e6) | 0;

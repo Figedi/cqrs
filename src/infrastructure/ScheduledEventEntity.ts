@@ -1,5 +1,5 @@
 import { Column, Entity, PrimaryColumn } from "typeorm";
-import { ISerializedEvent } from "../types";
+import { ISerializedEvent } from "../types.js";
 
 @Entity("scheduled_events")
 export class ScheduledEventEntity {

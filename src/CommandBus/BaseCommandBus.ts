@@ -1,15 +1,17 @@
-import { Logger, sleep } from "@figedi/svc";
-import { Left, isLeft } from "fp-ts/lib/Either";
-import { identity, isNil } from "lodash";
-import { Observable, Subject, Subscription, defer, merge } from "rxjs";
-import RateLimiter from "rxjs-ratelimiter";
+import type { Logger } from "@figedi/svc";
+import type { Left } from "fp-ts/lib/Either.js";
+import { isLeft } from "fp-ts/lib/Either.js";
+import { identity, isNil } from "lodash-es";
+import type { Observable, Subscription } from "rxjs";
+import { Subject, defer, merge } from "rxjs";
 import { filter, map, mergeMap, retry, share, tap } from "rxjs/operators";
-import { retryBackoff, RetryBackoffConfig } from "backoff-rxjs";
+import type { RetryBackoffConfig } from "backoff-rxjs";
+import { retryBackoff } from "backoff-rxjs";
 
-import { deserializeEvent } from "../common";
-import { ApplicationError, ConfigError, StreamEndedError, TimeoutExceededError } from "../errors";
-import { IPersistedEvent } from "../infrastructure/types";
-import {
+import { deserializeEvent } from "../common.js";
+import { ApplicationError, ConfigError, StreamEndedError, TimeoutExceededError } from "../errors.js";
+import type { IPersistedEvent } from "../infrastructure/types.js";
+import type {
   AnyEither,
   IUniformRetryOpts,
   ICommand,
@@ -19,7 +21,9 @@ import {
   IProcessResult,
   TransactionalScope,
   Constructor,
-} from "../types";
+} from "../types.js";
+import RateLimiter from "../utils/rxjsRateLimiter.js";
+import { sleep } from "../utils/sleep.js";
 
 interface IInitializedTopicConsumer<O> {
   meta: Omit<IHandlerConfig<ICommand>, "classType">;
@@ -199,7 +203,8 @@ export class BaseCommandBus {
     ]);
   }
 
-  protected async onLeftResult(eventId: string, left: Left<Error>, _scope?: TransactionalScope): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  protected async onLeftResult(eventId: string, left: Left<Error>, _scope: TransactionalScope): Promise<void> {
     this.logger.error(
       { error: left.left },
       `Unexpected left-result in handler for event ${eventId}: ${left.left.message}`,

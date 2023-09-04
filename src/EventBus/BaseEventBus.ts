@@ -1,13 +1,22 @@
 import type { ServiceWithLifecycleHandlers } from "@figedi/svc";
 
-import { Subject, Subscription } from "rxjs";
+import type { Subscription } from "rxjs";
+import { Subject } from "rxjs";
 import { share } from "rxjs/operators";
-import { deserializeEvent } from "../common";
-import { ApplicationError } from "../errors";
-import { IPersistedEvent } from "../infrastructure/types";
+import { deserializeEvent } from "../common.js";
+import { ApplicationError } from "../errors.js";
+import type { IPersistedEvent } from "../infrastructure/types.js";
 
-import { ClassContextProvider, Constructor, ExecuteOpts, IEvent, IEventBus, ISaga, StringEither } from "../types";
-import { SagaTriggeredCommandEvent } from "../utils";
+import type {
+  ClassContextProvider,
+  Constructor,
+  ExecuteOpts,
+  IEvent,
+  IEventBus,
+  ISaga,
+  StringEither,
+} from "../types.js";
+import { SagaTriggeredCommandEvent } from "../utils/internalEvents.js";
 
 export abstract class BaseEventBus implements IEventBus, ServiceWithLifecycleHandlers {
   private readonly sagaSubscriptions: Record<string, Subscription> = {};

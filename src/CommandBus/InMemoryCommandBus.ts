@@ -1,8 +1,8 @@
-import { isLeft, right } from "fp-ts/lib/Either";
+import { isLeft, right } from "fp-ts/lib/Either.js";
 import { v4 as uuid } from "uuid";
 
-import { AnyEither, ExecuteOpts, ICommand, ICommandBus, StringEither, VoidEither } from "../types";
-import { BaseCommandBus } from "./BaseCommandBus";
+import type { AnyEither, ExecuteOpts, ICommand, ICommandBus, StringEither, VoidEither } from "../types.js";
+import { BaseCommandBus } from "./BaseCommandBus.js";
 
 export class InMemoryCommandBus extends BaseCommandBus implements ICommandBus {
   public async drain(): Promise<void> {

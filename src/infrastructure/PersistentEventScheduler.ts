@@ -1,40 +1,46 @@
-import { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
-import { isLeft } from "fp-ts/lib/Either";
-import { deserializeEvent, serializeEvent } from "../common";
-import { AnyEither, ICommand, ICommandBus, ScheduledEventStatus, StringEither } from "../types";
-import { ScheduledEventEntity } from "./ScheduledEventEntity";
-import { IEventScheduler, IScheduleOptions, IScopeProvider } from "./types";
+import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
+import { isLeft } from "fp-ts/lib/Either.js";
+import { deserializeEvent, serializeEvent } from "../common.js";
+import type { AnyEither, ICommand, ICommandBus, ScheduledEventStatus, StringEither } from "../types.js";
+import { ScheduledEventEntity } from "./ScheduledEventEntity.js";
+import type { IEventScheduler, IScheduleOptions, IScopeProvider } from "./types.js";
 
 export class PersistentEventScheduler implements IEventScheduler, ServiceWithLifecycleHandlers {
   private schedules: Record<string, NodeJS.Timeout> = {};
 
-  constructor(private scopeProvider: IScopeProvider, private commandBus: ICommandBus, private logger: Logger) {}
+  constructor(
+    private scopeProvider: IScopeProvider,
+    private commandBus: ICommandBus,
+    private logger: Logger,
+  ) {}
 
   private get eventRepo() {
     return this.scopeProvider().getRepository(ScheduledEventEntity);
   }
 
-  private onCommandExecute = <TRes extends AnyEither>(
-    command: ICommand<any, TRes>,
-    onExecute?: (result: TRes | StringEither) => Promise<void> | void,
-    executeOpts?: IScheduleOptions,
-  ) => async (): Promise<void> => {
-    const eventId = command.meta.eventId!;
-    let result: TRes | StringEither;
-    try {
-      if (executeOpts?.executeSync) {
-        result = await this.commandBus.executeSync(command, executeOpts);
-      } else {
-        result = await this.commandBus.execute(command, executeOpts);
+  private onCommandExecute =
+    <TRes extends AnyEither>(
+      command: ICommand<any, TRes>,
+      onExecute?: (result: TRes | StringEither) => Promise<void> | void,
+      executeOpts?: IScheduleOptions,
+    ) =>
+    async (): Promise<void> => {
+      const eventId = command.meta.eventId!;
+      let result: TRes | StringEither;
+      try {
+        if (executeOpts?.executeSync) {
+          result = await this.commandBus.executeSync(command, executeOpts);
+        } else {
+          result = await this.commandBus.execute(command, executeOpts);
+        }
+        onExecute?.(result);
+        await this.updateScheduledEventStatus(command, isLeft(result) ? "FAILED" : "PROCESSED");
+      } catch (e) {
+        await this.updateScheduledEventStatus(command, "FAILED");
+      } finally {
+        clearTimeout(this.schedules[eventId]);
       }
-      onExecute?.(result);
-      await this.updateScheduledEventStatus(command, isLeft(result) ? "FAILED" : "PROCESSED");
-    } catch (e) {
-      await this.updateScheduledEventStatus(command, "FAILED");
-    } finally {
-      clearTimeout(this.schedules[eventId]);
-    }
-  };
+    };
 
   public async scheduleCommand<TPayload extends Record<string, any>, TRes extends AnyEither>(
     command: ICommand<TPayload, TRes>,
@@ -147,26 +153,32 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
 export class InMemoryEventScheduler implements IEventScheduler, ServiceWithLifecycleHandlers {
   private schedules: Record<string, NodeJS.Timeout> = {};
 
-  constructor(_: IScopeProvider, private commandBus: ICommandBus, private logger: Logger) {}
+  constructor(
+    _: IScopeProvider,
+    private commandBus: ICommandBus,
+    private logger: Logger,
+  ) {}
 
-  private onCommandExecute = <TRes extends AnyEither>(
-    command: ICommand<any, TRes>,
-    onExecute?: (result: TRes | StringEither) => Promise<void> | void,
-    executeOpts?: IScheduleOptions,
-  ) => async (): Promise<void> => {
-    const eventId = command.meta.eventId!;
-    let result: TRes | StringEither;
-    try {
-      if (executeOpts?.executeSync) {
-        result = await this.commandBus.executeSync(command, executeOpts);
-      } else {
-        result = await this.commandBus.execute(command, executeOpts);
+  private onCommandExecute =
+    <TRes extends AnyEither>(
+      command: ICommand<any, TRes>,
+      onExecute?: (result: TRes | StringEither) => Promise<void> | void,
+      executeOpts?: IScheduleOptions,
+    ) =>
+    async (): Promise<void> => {
+      const eventId = command.meta.eventId!;
+      let result: TRes | StringEither;
+      try {
+        if (executeOpts?.executeSync) {
+          result = await this.commandBus.executeSync(command, executeOpts);
+        } else {
+          result = await this.commandBus.execute(command, executeOpts);
+        }
+        onExecute?.(result);
+      } finally {
+        clearTimeout(this.schedules[eventId]);
       }
-      onExecute?.(result);
-    } finally {
-      clearTimeout(this.schedules[eventId]);
-    }
-  };
+    };
 
   public async scheduleCommand<TPayload extends Record<string, any>, TRes extends AnyEither>(
     command: ICommand<TPayload, TRes>,

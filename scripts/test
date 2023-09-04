@@ -6,11 +6,11 @@ export PATH=node_modules/.bin:$PATH
 if [ -z "${CI}" ]; then
     echo "Detected no CI-environment, will test with ts-node"
     
-    env $(cat .env | grep -v "#" | xargs) PG_HOST=localhost mocha --exit --require ts-node/register 'src/**/*.spec.ts'
+    env $(cat .env | grep -v "#" | xargs) NODE_OPTIONS="--loader ts-node/esm" PG_HOST=localhost mocha --exit 'src/**/*.spec.ts'
 else
     echo "Detected CI-environment, will test directly"
     [ -f /wait ] && /wait
-    MOCHA_FILE=coverage/tests/mocha/results.xml nyc mocha --reporter mocha-junit-reporter 'dist/**/*.spec.js'
+    env $(cat .env.test | grep -v "#" | xargs) MOCHA_FILE=coverage/tests/mocha/results.xml mocha --exit 'dist/**/*.spec.js'
 fi
 
 

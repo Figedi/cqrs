@@ -1,10 +1,9 @@
 import type { Logger } from "@figedi/svc";
 
-import { IEventStore, IScopeProvider } from "../infrastructure/types";
-
-import { ICommandBus } from "../types";
-import { InMemoryCommandBus } from "./InMemoryCommandBus";
-import { PersistentCommandBus } from "./PersistentCommandBus";
+import type { IEventStore, IScopeProvider } from "../infrastructure/types.js";
+import type { ICommandBus } from "../types.js";
+import { InMemoryCommandBus } from "./InMemoryCommandBus.js";
+import { PersistentCommandBus } from "./PersistentCommandBus.js";
 
 export const createCommandBus = (
   persistence: "inmem" | "pg",

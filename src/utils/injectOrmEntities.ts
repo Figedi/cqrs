@@ -1,6 +1,6 @@
-import { DataSourceOptions } from "typeorm";
-import { EventEntity } from "../infrastructure/EventEntity";
-import { ScheduledEventEntity } from "../infrastructure/ScheduledEventEntity";
+import type { DataSourceOptions } from "typeorm";
+import { EventEntity } from "../infrastructure/EventEntity.js";
+import { ScheduledEventEntity } from "../infrastructure/ScheduledEventEntity.js";
 
 export const injectEntitiesIntoOrmConfig = (config: DataSourceOptions): DataSourceOptions => {
   if (!config.entities) {

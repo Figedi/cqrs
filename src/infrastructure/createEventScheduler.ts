@@ -1,7 +1,7 @@
-import { Logger } from "@figedi/svc";
-import { ICommandBus } from "../types";
-import { InMemoryEventScheduler, PersistentEventScheduler } from "./PersistentEventScheduler";
-import { IEventScheduler, IScopeProvider } from "./types";
+import type { Logger } from "@figedi/svc";
+import type { ICommandBus } from "../types.js";
+import { InMemoryEventScheduler, PersistentEventScheduler } from "./PersistentEventScheduler.js";
+import type { IEventScheduler, IScopeProvider } from "./types.js";
 
 export const createEventScheduler = (
   persistence: "inmem" | "pg",

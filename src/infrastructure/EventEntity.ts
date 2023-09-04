@@ -1,7 +1,7 @@
 import { Column, Entity, PrimaryColumn } from "typeorm";
 
-import { IMeta, ISerializedEvent } from "../types";
-import { EventTypes } from "./types";
+import { IMeta, ISerializedEvent } from "../types.js";
+import { EventTypes } from "./types.js";
 
 @Entity("events")
 export class EventEntity {

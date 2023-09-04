@@ -1,9 +1,9 @@
 import type { Logger } from "@figedi/svc";
-import { IEventStore } from "../infrastructure/types";
+import type { IEventStore } from "../infrastructure/types.js";
 
-import { ClassContextProvider, IEventBus } from "../types";
-import { InMemoryEventBus } from "./InMemoryEventBus";
-import { PersistentEventBus } from "./PersistentEventBus";
+import type { ClassContextProvider, IEventBus } from "../types.js";
+import { InMemoryEventBus } from "./InMemoryEventBus.js";
+import { PersistentEventBus } from "./PersistentEventBus.js";
 
 export const createEventBus = (
   persistence: "inmem" | "pg",

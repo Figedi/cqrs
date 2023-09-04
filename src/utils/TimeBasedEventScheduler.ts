@@ -1,15 +1,19 @@
 import type { Logger } from "@figedi/svc";
-import { Job, scheduleJob } from "node-schedule";
+import type { Job } from "node-schedule";
+import { scheduleJob } from "node-schedule";
 
-import { Constructor, IEvent, IEventBus } from "../types";
-import { DayPassed, HourPassed, MinutePassed, WeekPassed } from "./internalEvents";
+import type { Constructor, IEvent, IEventBus } from "../types.js";
+import { DayPassed, HourPassed, MinutePassed, WeekPassed } from "./internalEvents.js";
 
 export class TimeBasedEventScheduler {
   private jobs: Job[] = [];
 
   private registeredJobs: [string, Constructor<IEvent>][] = [];
 
-  constructor(private eventBus: IEventBus, private logger: Logger) {}
+  constructor(
+    private eventBus: IEventBus,
+    private logger: Logger,
+  ) {}
 
   private dispatchEvent = (EventCtor: Constructor<IEvent>) => (): void => {
     this.eventBus.execute(new EventCtor({ now: new Date() }), { transient: true }).catch(e => {

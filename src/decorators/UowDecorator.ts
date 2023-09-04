@@ -1,12 +1,12 @@
-import { Logger, sleep } from "@figedi/svc";
-import { isLeft, left } from "fp-ts/lib/Either";
-import { random } from "lodash";
-import { EntityManager } from "typeorm";
-import { IsolationLevel } from "typeorm/driver/types/IsolationLevel";
-import VError from "verror";
+import type { Logger } from "@figedi/svc";
+import { isLeft, left } from "fp-ts/lib/Either.js";
+import { random } from "lodash-es";
+import type { EntityManager } from "typeorm";
+import type { IsolationLevel } from "typeorm/driver/types/IsolationLevel.js";
 
-import { isCommandHandler, mergeObjectContext, mergeWithParentCommand } from "../common";
-import {
+import { isCommandHandler, mergeObjectContext, mergeWithParentCommand } from "../common.js";
+import { TxTimeoutError } from "../errors.js";
+import type {
   AnyEither,
   ClassContextProvider,
   HandlerContext,
@@ -16,13 +16,8 @@ import {
   IQuery,
   IQueryHandler,
   StringEither,
-} from "../types";
-
-export class TxTimeoutError extends VError {
-  constructor(public message: string, public code: string) {
-    super(message);
-  }
-}
+} from "../types.js";
+import { sleep } from "../utils/sleep.js";
 
 enum ErrorCodes {
   TIMEOUT = "TIMEOUT",
@@ -40,7 +35,10 @@ export interface UowTxSettings {
 }
 
 export class UowDecorator implements IDecorator {
-  constructor(private txSettings: UowTxSettings, private ctxProvider: ClassContextProvider) {}
+  constructor(
+    private txSettings: UowTxSettings,
+    private ctxProvider: ClassContextProvider,
+  ) {}
 
   private async maybePublishCommandEvents<TPayload extends ICommand, TRes extends AnyEither>(
     parentCommand: TPayload,

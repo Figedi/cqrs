@@ -1,19 +1,33 @@
 import { serializeError } from "serialize-error";
 import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
-import { Left, isLeft, left, right } from "fp-ts/lib/Either";
-import { Subscription } from "rxjs";
+import type { Left } from "fp-ts/lib/Either.js";
+import { isLeft, left, right } from "fp-ts/lib/Either.js";
+import type { Subscription } from "rxjs";
 import { v4 as uuid } from "uuid";
 
-import { deserializeEvent, serializeEvent } from "../common";
-import { EventIdMissingError } from "../errors";
-import { IEventStore, IScopeProvider } from "../infrastructure/types";
-import { AnyEither, ExecuteOpts, ICommand, ICommandBus, ICommandHandler, StringEither, VoidEither } from "../types";
-import { BaseCommandBus, IMeteredCommandHandlerResult } from "./BaseCommandBus";
+import { deserializeEvent, serializeEvent } from "../common.js";
+import { EventIdMissingError } from "../errors.js";
+import type { IEventStore, IScopeProvider } from "../infrastructure/types.js";
+import type {
+  AnyEither,
+  ExecuteOpts,
+  ICommand,
+  ICommandBus,
+  ICommandHandler,
+  StringEither,
+  VoidEither,
+} from "../types.js";
+import type { IMeteredCommandHandlerResult } from "./BaseCommandBus.js";
+import { BaseCommandBus } from "./BaseCommandBus.js";
 
 export class PersistentCommandBus extends BaseCommandBus implements ICommandBus, ServiceWithLifecycleHandlers {
   private pollingSubscription: Subscription;
 
-  constructor(logger: Logger, private eventStore: IEventStore, private scopeProvider: IScopeProvider) {
+  constructor(
+    logger: Logger,
+    private eventStore: IEventStore,
+    private scopeProvider: IScopeProvider,
+  ) {
     super(logger);
   }
 

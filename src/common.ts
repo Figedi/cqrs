@@ -1,14 +1,13 @@
-import { left } from "fp-ts/lib/Either";
-import { Observable } from "rxjs";
+import { left } from "fp-ts/lib/Either.js";
+import type { Observable } from "rxjs";
 import { filter } from "rxjs/operators";
-import { Connection } from "typeorm";
+import type { Connection } from "typeorm";
 import { v4 as uuid } from "uuid";
 
-import { ApplicationError } from "./errors";
-import { IScopeProvider } from "./infrastructure/types";
-import {
+import { ApplicationError } from "./errors.js";
+import type { IScopeProvider } from "./infrastructure/types.js";
+import type {
   AnyEither,
-  CQRSEventType,
   ClassContextProvider,
   Constructor,
   HandlerContext,
@@ -20,7 +19,8 @@ import {
   IQueryHandler,
   ISerializedEvent,
   StringEither,
-} from "./types";
+} from "./types.js";
+import { CQRSEventType } from "./types.js";
 
 interface IScopeOpts {
   type: "inmem" | "pg";
@@ -28,12 +28,14 @@ interface IScopeOpts {
   connectionProvider?: (name?: string) => Connection;
 }
 
-export const createScopeProvider = ({ name, type, connectionProvider }: IScopeOpts): IScopeProvider => () => {
-  if (type === "pg" && connectionProvider) {
-    return connectionProvider(name).manager;
-  }
-  return {} as any;
-};
+export const createScopeProvider =
+  ({ name, type, connectionProvider }: IScopeOpts): IScopeProvider =>
+  () => {
+    if (type === "pg" && connectionProvider) {
+      return connectionProvider(name).manager;
+    }
+    return {} as any;
+  };
 
 export const ofType = <TInput extends IEvent, TOutput extends IEvent>(...events: Constructor<TOutput>[]) => {
   const isInstanceOf = (event: IEvent): event is TOutput =>
@@ -41,7 +43,7 @@ export const ofType = <TInput extends IEvent, TOutput extends IEvent>(...events:
   return (source: Observable<TInput>): Observable<TOutput> => source.pipe(filter(isInstanceOf));
 };
 
-export const serializeEvent = <T extends ICommand<TPayload> | IEvent<TPayload> | IQuery<TPayload>, TPayload>(
+export const serializeEvent = <TPayload, T extends ICommand<TPayload> | IEvent<TPayload> | IQuery<TPayload>>(
   ev: T,
 ): ISerializedEvent<TPayload> => ({
   meta: ev.meta,
@@ -195,8 +197,8 @@ export const createCommandHandler = <TRes extends AnyEither, Command extends ICo
       this.config = {
         ...(baseConfig || {}),
         classType: CQRSEventType.COMMAND,
-        topic: ((command as any) as Constructor<Command>).name,
-        handles: (command as any) as Constructor<Command>,
+        topic: (command as any as Constructor<Command>).name,
+        handles: command as any as Constructor<Command>,
       };
     }
 
@@ -208,6 +210,7 @@ export const createCommandHandler = <TRes extends AnyEither, Command extends ICo
       this.publishableEvents = events;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     public async handle(_c: Command, _ctx?: HandlerContext) {
       return left(new ApplicationError("BaseCommand-handler not usable by itself, please extend this class")) as TRes;
     }
@@ -227,11 +230,12 @@ export const createQueryHandler = <TRes extends AnyEither, Query extends IQuery 
       this.config = {
         ...(baseConfig || {}),
         classType: CQRSEventType.QUERY,
-        topic: ((query as any) as Constructor<Query>).name,
-        handles: (query as any) as Constructor<Query>,
+        topic: (query as any as Constructor<Query>).name,
+        handles: query as any as Constructor<Query>,
       };
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     public async handle(_q: Query) {
       return left(new ApplicationError("BaseQuery-handler not usable by itself, please extend this class")) as TRes;
     }

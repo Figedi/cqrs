@@ -1,16 +1,19 @@
 import { serializeError } from "serialize-error";
 import type { Logger } from "@figedi/svc";
-import { isLeft, left } from "fp-ts/lib/Either";
+import { isLeft, left } from "fp-ts/lib/Either.js";
 import { v4 as uuid } from "uuid";
 
-import { serializeEvent } from "../common";
-import { NoHandlerFoundError } from "../errors";
-import { IEventStore } from "../infrastructure/types";
-import { AnyEither, ExecuteOpts, IQuery, IQueryBus } from "../types";
-import { BaseQueryBus } from "./BaseQueryBus";
+import { serializeEvent } from "../common.js";
+import { NoHandlerFoundError } from "../errors.js";
+import type { IEventStore } from "../infrastructure/types.js";
+import type { AnyEither, ExecuteOpts, IQuery, IQueryBus } from "../types.js";
+import { BaseQueryBus } from "./BaseQueryBus.js";
 
 export class PersistentQueryBus extends BaseQueryBus implements IQueryBus {
-  constructor(private logger: Logger, private eventStore: IEventStore) {
+  constructor(
+    private logger: Logger,
+    private eventStore: IEventStore,
+  ) {
     super();
   }
 

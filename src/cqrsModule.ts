@@ -1,20 +1,22 @@
-import { Logger } from "@figedi/svc";
-import { DataSource, DataSourceOptions } from "typeorm";
+import type { Logger } from "@figedi/svc";
+import type { DataSourceOptions } from "typeorm";
+import { DataSource } from "typeorm";
 
-import { createCommandBus } from "./CommandBus";
-import { LoggingDecorator } from "./decorators/LoggingDecorator";
-import { UowDecorator, UowTxSettings } from "./decorators/UowDecorator";
-import { createEventBus } from "./EventBus";
-import { createEventStore } from "./infrastructure/createEventStore";
-import { createQuerybus } from "./QueryBus";
-import { TimeBasedEventScheduler } from "./utils/TimeBasedEventScheduler";
-import { ICommandBus, IEventBus, IQueryBus } from "./types";
-import { createWaitUntilIdle } from "./utils/waitUntilIdle";
-import { createWaitUntilSettled } from "./utils/waitUntilSettled";
-import { createScopeProvider } from "./common";
-import { ApplicationError } from "./errors";
-import { createEventScheduler } from "./infrastructure/createEventScheduler";
-import { EventTypes, IEventScheduler, IEventStore, IPersistedEvent } from "./infrastructure/types";
+import { createCommandBus } from "./CommandBus/index.js";
+import { LoggingDecorator } from "./decorators/LoggingDecorator.js";
+import type { UowTxSettings } from "./decorators/UowDecorator.js";
+import { UowDecorator } from "./decorators/UowDecorator.js";
+import { createEventBus } from "./EventBus/index.js";
+import { createEventStore } from "./infrastructure/createEventStore.js";
+import { createQuerybus } from "./QueryBus/index.js";
+import { TimeBasedEventScheduler } from "./utils/TimeBasedEventScheduler.js";
+import type { ICommandBus, IEventBus, IQueryBus } from "./types.js";
+import { createWaitUntilIdle } from "./utils/waitUntilIdle.js";
+import { createWaitUntilSettled } from "./utils/waitUntilSettled.js";
+import { createScopeProvider } from "./common.js";
+import { ApplicationError } from "./errors.js";
+import { createEventScheduler } from "./infrastructure/createEventScheduler.js";
+import type { EventTypes, IEventScheduler, IEventStore, IPersistedEvent } from "./infrastructure/types.js";
 
 export interface IConnectionProvider {
   get: () => DataSource;
@@ -49,7 +51,10 @@ export class CQRSModule {
 
   private eventStore!: IEventStore;
 
-  constructor(private settings: ICQRSSettings, private logger: Logger) {
+  constructor(
+    private settings: ICQRSSettings,
+    private logger: Logger,
+  ) {
     this.init();
   }
 

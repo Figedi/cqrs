@@ -1,11 +1,17 @@
-import VError from "verror";
+export class ApplicationError extends Error {}
 
-export class ApplicationError extends VError {}
-
-export class NoHandlerFoundError extends VError {}
-export class EventIdMissingError extends VError {}
-export class TimeoutExceededError extends VError {}
-export class RetriesExceededError extends VError {}
-export class StreamEndedError extends VError {}
-export class ConfigError extends VError {}
-export class UnknownStreamIdError extends VError {}
+export class NoHandlerFoundError extends Error {}
+export class EventIdMissingError extends Error {}
+export class TimeoutExceededError extends Error {}
+export class RetriesExceededError extends Error {}
+export class StreamEndedError extends Error {}
+export class ConfigError extends Error {}
+export class UnknownStreamIdError extends Error {}
+export class TxTimeoutError extends Error {
+  constructor(
+    public message: string,
+    public code: string,
+  ) {
+    super(message);
+  }
+}

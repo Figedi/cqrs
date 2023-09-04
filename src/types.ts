@@ -1,13 +1,55 @@
 import type { ErrorObject } from "serialize-error";
 import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
-import { Either } from "fp-ts/lib/Either";
-import { Option } from "fp-ts/lib/Option";
-import { Observable } from "rxjs";
-import { RetryBackoffConfig } from "backoff-rxjs";
-import { EntityManager } from "typeorm";
-import { IPersistedEvent } from "./infrastructure/types";
+import type { Either } from "fp-ts/lib/Either.js";
+import type { Option } from "fp-ts/lib/Option.js";
+import type { Observable } from "rxjs";
+import type { RetryBackoffConfig } from "backoff-rxjs";
+import type { EntityManager } from "typeorm";
+import type { IPersistedEvent } from "./infrastructure/types.js";
 
 export type ScheduledEventStatus = "CREATED" | "FAILED" | "ABORTED" | "PROCESSED";
+export interface Constructor<T> extends Function {
+  new (...args: any[]): T;
+}
+export interface IMeta {
+  lastCalled?: Date;
+  error?: Error | ErrorObject;
+}
+
+export enum CQRSEventType {
+  QUERY = "QUERY",
+  COMMAND = "COMMAND",
+  EVENT = "EVENT",
+}
+
+interface IEventMeta {
+  className: string;
+  classType: CQRSEventType;
+  streamId?: string;
+  eventId?: string;
+  transient?: boolean;
+}
+export type VoidEither<TError = any> = Either<TError, Option<never>>;
+export type StringEither<TError = any> = Either<TError, string>;
+export type AnyEither = Either<any, any>;
+
+export interface ICommand<TPayload = any, TRes extends AnyEither = AnyEither> {
+  meta: IEventMeta;
+  payload: TPayload;
+  publish(): Promise<TRes>;
+}
+
+export interface IQuery<TPayload = any, TRes extends AnyEither = AnyEither> {
+  meta: IEventMeta;
+  payload: TPayload;
+  publish(): Promise<TRes>;
+}
+
+export interface IEvent<TPayload = any, TRes extends StringEither = StringEither> {
+  meta: IEventMeta;
+  payload: TPayload;
+  publish(delayUntilNextTick?: boolean): Promise<TRes>;
+}
 
 export interface IScheduledEvent {
   scheduledEventId: string;
@@ -17,23 +59,10 @@ export interface IScheduledEvent {
   status: ScheduledEventStatus;
 }
 
-export interface IDecorator {
-  decorate<T extends ICommand | IQuery, TRes extends AnyEither>(
-    handler: ICommandHandler<T, TRes> | IQueryHandler<T, TRes>,
-  ): ICommandHandler<T, TRes> | IQueryHandler<T, TRes>;
-}
-
 export interface ISaga<TPayload = any> {
   process(events$: Observable<IEvent<TPayload, any>>): Observable<ICommand>;
 }
 
-export interface IMeta {
-  lastCalled?: Date;
-  error?: Error | ErrorObject;
-}
-export type VoidEither<TError = any> = Either<TError, Option<never>>;
-export type StringEither<TError = any> = Either<TError, string>;
-export type AnyEither = Either<any, any>;
 export type TransactionalScope = EntityManager;
 
 export interface HandlerContext {
@@ -59,6 +88,27 @@ export interface IHandlerConfig<THandler = ICommand | IQuery | IEvent> {
   classType: CQRSEventType;
 }
 
+export interface IProcessResult<TRes> {
+  meta: {
+    timeTakenMs: number;
+  };
+  eventId: string;
+  payload: TRes;
+}
+export interface ExecuteOpts {
+  transient?: boolean;
+  timeout?: number;
+  delayUntilNextTick?: boolean;
+  scope?: TransactionalScope;
+  streamId?: string;
+  eventId?: string;
+}
+
+export interface ISerializedEvent<TPayload> {
+  meta: IEventMeta;
+  payload: TPayload;
+}
+
 export interface IQueryHandler<Query extends IQuery, TRes extends AnyEither> {
   config: IHandlerConfig;
   handle(query: Query): Promise<TRes>;
@@ -71,12 +121,22 @@ export interface ICommandHandler<Command extends ICommand, TRes extends AnyEithe
   handle(command: Command, ctx?: HandlerContext): Promise<TRes>;
 }
 
-export interface IProcessResult<TRes> {
-  meta: {
-    timeTakenMs: number;
-  };
-  eventId: string;
-  payload: TRes;
+export interface IDecorator {
+  decorate<T extends ICommand | IQuery, TRes extends AnyEither>(
+    handler: ICommandHandler<T, TRes> | IQueryHandler<T, TRes>,
+  ): ICommandHandler<T, TRes> | IQueryHandler<T, TRes>;
+}
+
+export interface IEventBus extends ServiceWithLifecycleHandlers {
+  execute<TPayload, TRes extends StringEither, IEventRes extends StringEither>(
+    event: IEvent<TPayload, IEventRes>,
+    opts?: ExecuteOpts,
+  ): Promise<TRes>;
+  deserializeEvent(event: IPersistedEvent): IEvent;
+  replayByStreamIds<TRes extends StringEither>(streamIds: string[]): Promise<TRes[]>;
+  register(...events: Constructor<IEvent>[]): void;
+  registerSagas(...saga: ISaga[]): void;
+  stream(): Observable<IEvent>;
 }
 
 export interface IQueryBus extends ServiceWithLifecycleHandlers {
@@ -108,62 +168,6 @@ export interface ICommandBus extends ServiceWithLifecycleHandlers {
   stream(topic?: string): Observable<ICommand>;
 }
 
-export interface ExecuteOpts {
-  transient?: boolean;
-  timeout?: number;
-  delayUntilNextTick?: boolean;
-  scope?: TransactionalScope;
-  streamId?: string;
-  eventId?: string;
-}
-
-export interface IEventBus extends ServiceWithLifecycleHandlers {
-  execute<TPayload, TRes extends StringEither, IEventRes extends StringEither>(
-    event: IEvent<TPayload, IEventRes>,
-    opts?: ExecuteOpts,
-  ): Promise<TRes>;
-  deserializeEvent(event: IPersistedEvent): IEvent;
-  replayByStreamIds<TRes extends StringEither>(streamIds: string[]): Promise<TRes[]>;
-  register(...events: Constructor<IEvent>[]): void;
-  registerSagas(...saga: ISaga[]): void;
-  stream(): Observable<IEvent>;
-}
-
-interface IEventMeta {
-  className: string;
-  classType: CQRSEventType;
-  streamId?: string;
-  eventId?: string;
-  transient?: boolean;
-}
-
-export interface ISerializedEvent<TPayload> {
-  meta: IEventMeta;
-  payload: TPayload;
-}
-
-export interface ICommand<TPayload = any, TRes extends AnyEither = AnyEither> {
-  meta: IEventMeta;
-  payload: TPayload;
-  publish(): Promise<TRes>;
-}
-
-export interface IQuery<TPayload = any, TRes extends AnyEither = AnyEither> {
-  meta: IEventMeta;
-  payload: TPayload;
-  publish(): Promise<TRes>;
-}
-
-export interface IEvent<TPayload = any, TRes extends StringEither = StringEither> {
-  meta: IEventMeta;
-  payload: TPayload;
-  publish(delayUntilNextTick?: boolean): Promise<TRes>;
-}
-
-export interface Constructor<T> extends Function {
-  new (...args: any[]): T;
-}
-
 export interface IClassContext {
   eventBus: IEventBus;
   commandBus: ICommandBus;
@@ -171,9 +175,3 @@ export interface IClassContext {
 }
 
 export type ClassContextProvider = () => IClassContext;
-
-export enum CQRSEventType {
-  QUERY = "QUERY",
-  COMMAND = "COMMAND",
-  EVENT = "EVENT",
-}

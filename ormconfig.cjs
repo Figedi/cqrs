@@ -16,5 +16,5 @@ module.exports = {
   },
   type: "postgres",
   url: `postgres://${process.env.PG_USER_NAME}:${process.env.PG_PASSWORD}@${process.env.PG_HOST}:5432/${process.env.PG_DB}`,
-  extra: { max: isProduction ? 10 : 50 }
+  extra: { max: isProduction ? 10 : 50 },
 };

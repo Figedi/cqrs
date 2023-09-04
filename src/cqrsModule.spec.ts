@@ -1,20 +1,23 @@
-import { createLogger, sleep } from "@figedi/svc";
 import { expect } from "chai";
-import { Either, Right, isRight, left, right } from "fp-ts/lib/Either";
-import { Option, none } from "fp-ts/lib/Option";
-import { isLeft } from "fp-ts/lib/These";
-import { times } from "lodash";
-import { EMPTY, Observable, of } from "rxjs";
+import type { Either, Right } from "fp-ts/lib/Either.js";
+import { isLeft, isRight, left, right } from "fp-ts/lib/Either.js";
+import type { Option } from "fp-ts/lib/Option.js";
+import { none } from "fp-ts/lib/Option.js";
+import { times } from "lodash-es";
+import type { Observable } from "rxjs";
+import { EMPTY, of } from "rxjs";
 import { mergeMap } from "rxjs/operators";
-import Sinon, { assert, stub, useFakeTimers } from "sinon";
+import type Sinon from "sinon";
+import { assert, stub, useFakeTimers } from "sinon";
 import { DataSource } from "typeorm";
 
-import { createCommand, createCommandHandler, createEvent, createQuery, createQueryHandler } from "./common";
-import { ICQRSSettings, CQRSModule } from "./cqrsModule";
-import { RetriesExceededError, ConfigError } from "./errors";
-import { EventEntity } from "./infrastructure/EventEntity";
-import { ScheduledEventEntity } from "./infrastructure/ScheduledEventEntity";
-import {
+import { createCommand, createCommandHandler, createEvent, createQuery, createQueryHandler } from "./common.js";
+import type { ICQRSSettings } from "./cqrsModule.js";
+import { CQRSModule } from "./cqrsModule.js";
+import { RetriesExceededError, ConfigError } from "./errors.js";
+import { EventEntity } from "./infrastructure/EventEntity.js";
+import { ScheduledEventEntity } from "./infrastructure/ScheduledEventEntity.js";
+import type {
   Constructor,
   HandlerContext,
   ICommand,
@@ -24,9 +27,12 @@ import {
   ISaga,
   TransactionalScope,
   VoidEither,
-} from "./types";
-
-const baseOrmConfig = require("../ormconfig.js");
+} from "./types.js";
+import { sleep } from "./utils/sleep.js";
+import pino from "pino";
+// @ts-ignore
+import baseOrmConfig from "../ormconfig.cjs";
+type ExampleQueryResult = Either<Error, { id: string; result: number }>;
 
 class ExampleCommand extends createCommand<{ id: string; type: string }>() {}
 class ExampleEvent extends createEvent<{ id: string; type: string }>() {}
@@ -35,8 +41,8 @@ class ExampleQuery extends createQuery<{ id: string; type: string }, ExampleQuer
 type ExampleCommandResult = Either<Error, Option<never>>;
 
 const createExampleCommandHandler = <
-  TCommand extends ICommand<TPayload>,
   TPayload extends { id: string; type: string },
+  TCommand extends ICommand<TPayload>,
 >(
   cb: (payload: TPayload, scope: TransactionalScope) => void | Promise<void>,
   Command: Constructor<TCommand> = ExampleCommand as unknown as Constructor<TCommand>,
@@ -61,9 +67,8 @@ const createExampleCommandHandler = <
       return right(none);
     }
   };
-type ExampleQueryResult = Either<Error, { id: string; result: number }>;
 
-const createExampleQueryHandler = <TQuery extends IQuery<TPayload>, TPayload extends { id: string; type: string }>(
+const createExampleQueryHandler = <TPayload extends { id: string; type: string }, TQuery extends IQuery<TPayload>>(
   cb: (payload: TPayload) => void,
   Query: Constructor<TQuery> = ExampleQuery as unknown as Constructor<TQuery>,
 ) =>
@@ -166,7 +171,7 @@ const createConnection = async (connectionUrl: string) => {
 };
 
 describe("cqrsModule", () => {
-  const logger = createLogger({ level: "debug", base: { service: "test", env: "test" }, prettyPrint: false });
+  const logger = pino({ level: "debug", base: { service: "test", env: "test" } });
   // const logger = createStubbedLogger();
   const ID = "42";
 
@@ -218,21 +223,22 @@ describe("cqrsModule", () => {
       );
     }
     let dataSource: DataSource;
-    const CQRS_OPTIONS: ICQRSSettings = {
-      transaction: txSettings,
 
-      persistence: {
-        type: "pg",
-        runMigrations: true,
-        options: {
-          ...baseOrmConfig,
-          url: connectionUrl,
-        },
-      },
-    };
     let cqrsModule: CQRSModule;
 
     before(async () => {
+      const CQRS_OPTIONS: ICQRSSettings = {
+        transaction: txSettings,
+
+        persistence: {
+          type: "pg",
+          runMigrations: true,
+          options: {
+            ...baseOrmConfig,
+            url: connectionUrl,
+          },
+        },
+      };
       cqrsModule = new CQRSModule(CQRS_OPTIONS as ICQRSSettings, logger);
       await cqrsModule.preflight();
     });

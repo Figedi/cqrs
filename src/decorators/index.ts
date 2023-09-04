@@ -1,2 +1,2 @@
-export * from "./LoggingDecorator";
-export * from "./UowDecorator";
+export * from "./LoggingDecorator.js";
+export * from "./UowDecorator.js";

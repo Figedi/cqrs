@@ -1,7 +1,8 @@
 import { In } from "typeorm";
-import { omitBy, isNil } from "lodash";
-import { EventEntity } from "./EventEntity";
-import { EventTypes, IEventStore, IPersistedEvent, IScopeProvider } from "./types";
+import { omitBy, isNil } from "lodash-es";
+import { EventEntity } from "./EventEntity.js";
+import type { EventTypes, IEventStore, IPersistedEvent, IScopeProvider } from "./types.js";
+import type { QueryDeepPartialEntity } from "typeorm/query-builder/QueryPartialEntity.js";
 
 export class PersistentEventStore implements IEventStore {
   constructor(private scopeProvider: IScopeProvider) {}
@@ -11,11 +12,11 @@ export class PersistentEventStore implements IEventStore {
   }
 
   public async insert(event: IPersistedEvent): Promise<void> {
-    await this.em.getRepository(EventEntity).insert(event);
+    await this.em.getRepository(EventEntity).insert(event as QueryDeepPartialEntity<EventEntity>);
   }
 
   public async updateByEventId(eventId: string, event: Partial<IPersistedEvent>): Promise<void> {
-    await this.em.getRepository(EventEntity).update({ eventId }, event);
+    await this.em.getRepository(EventEntity).update({ eventId }, event as QueryDeepPartialEntity<EventEntity>);
   }
 
   public async findByEventIds(

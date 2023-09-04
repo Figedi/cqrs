@@ -1,8 +1,18 @@
-import { AnyEither, ExecuteOpts, ICommand, IMeta, ISerializedEvent, StringEither, TransactionalScope } from "../types";
+import type {
+  AnyEither,
+  ExecuteOpts,
+  ICommand,
+  IMeta,
+  ISerializedEvent,
+  StringEither,
+  TransactionalScope,
+} from "../types.js";
 
 export interface IScheduleOptions extends ExecuteOpts {
   executeSync?: boolean;
 }
+
+export type IScopeProvider = () => TransactionalScope;
 
 export interface IEventScheduler {
   scheduleCommand<TPayload extends Record<string, any>, TRes extends AnyEither>(
@@ -47,5 +57,3 @@ export interface IEventStore {
     type?: EventTypes,
   ): Promise<Pick<IPersistedEvent, TKeys>[]>;
 }
-
-export type IScopeProvider = () => TransactionalScope;
