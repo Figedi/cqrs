@@ -5,12 +5,8 @@ on:
     branches:
       - "master"
 jobs:
-  container-job:
-    # Containers must run in Linux based operating systems
+  build_and_push:
     runs-on: ubuntu-latest
-    # Docker Hub image that `container-job` executes in
-    container: node:10.18-jessie
-
     # Service containers to run with `container-job`
     services:
       # Label used to access the service container
@@ -30,8 +26,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-  build_and_push:
-    runs-on: ubuntu-latest
     permissions: write-all
     steps:
       - name: Checkout
@@ -62,5 +56,5 @@ jobs:
       - name: Semantic Release
         uses: cycjimmy/semantic-release-action@v3
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
