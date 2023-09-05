@@ -124,6 +124,15 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
   }
 
   public async preflight() {
+    if (this.opts.runMigrations) {
+      await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS "scheduled_events" (
+        "scheduled_event_id" text PRIMARY KEY,
+        "execute_at" timestamptz NOT NULL,
+        "event" jsonb NOT NULL,
+        "status" text NOT NULL)`);
+    }
+
     const eventSchedules = await db.select("scheduled_events", { status: "CREATED" }).run(this.pool);
     if (!eventSchedules.length) {
       return;

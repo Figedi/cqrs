@@ -94,5 +94,11 @@ export class CQRSModule {
     if ("preflight" in this.eventStore) {
       await (this.eventStore as any).preflight();
     }
+    if ("preflight" in this.eventScheduler) {
+      await (this.eventScheduler as any).preflight();
+    }
+    if ("preflight" in this.timeBasedEventScheduler) {
+      await (this.timeBasedEventScheduler as any).preflight();
+    }
   }
 }

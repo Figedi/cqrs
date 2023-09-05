@@ -252,8 +252,8 @@ describe("cqrsModule", () => {
 
     beforeEach(async () => {
       client = await pool.connect();
-      await client.query("TRUNCATE TABLE events RESTART IDENTITY CASCADE");
       await cqrsModule.preflight();
+      await client.query("TRUNCATE TABLE events RESTART IDENTITY CASCADE");
     });
 
     afterEach(async () => {
