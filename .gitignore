@@ -19,4 +19,5 @@ resources
 
 
 .eslintcache
-db
+/db
+.DS_Store

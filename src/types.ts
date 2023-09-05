@@ -1,11 +1,13 @@
-import type { ErrorObject } from "serialize-error";
 import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
+import type { Pool, PoolClient } from "pg";
+
 import type { Either } from "fp-ts/lib/Either.js";
-import type { Option } from "fp-ts/lib/Option.js";
-import type { Observable } from "rxjs";
-import type { RetryBackoffConfig } from "backoff-rxjs";
-import type { EntityManager } from "typeorm";
+import type { ErrorObject } from "serialize-error";
 import type { IPersistedEvent } from "./infrastructure/types.js";
+import type { Observable } from "rxjs";
+import type { Option } from "fp-ts/lib/Option.js";
+import type { RetryBackoffConfig } from "backoff-rxjs";
+import type { UowTxSettings } from "./decorators/UowDecorator.js";
 
 export type ScheduledEventStatus = "CREATED" | "FAILED" | "ABORTED" | "PROCESSED";
 export interface Constructor<T> extends Function {
@@ -29,6 +31,29 @@ interface IEventMeta {
   eventId?: string;
   transient?: boolean;
 }
+
+export interface IInmemorySettings {
+  type: "inmem";
+}
+export interface IPersistentSettings {
+  type: "pg";
+  client?: Pool;
+  runMigrations?: boolean;
+  options?: Record<string, any>;
+}
+export interface IPersistentSettingsWithClient extends IPersistentSettings {
+  client: Pool;
+}
+export type IPersistenceSettings = IInmemorySettings | IPersistentSettings;
+export type IPersistenceSettingsWithClient = IInmemorySettings | IPersistentSettingsWithClient;
+
+export interface ICQRSSettings {
+  persistence: IPersistenceSettings;
+  transaction: UowTxSettings;
+}
+
+export type ITransactionalScope = PoolClient | Pool;
+
 export type VoidEither<TError = any> = Either<TError, Option<never>>;
 export type StringEither<TError = any> = Either<TError, string>;
 export type AnyEither = Either<any, any>;
@@ -63,11 +88,9 @@ export interface ISaga<TPayload = any> {
   process(events$: Observable<IEvent<TPayload, any>>): Observable<ICommand>;
 }
 
-export type TransactionalScope = EntityManager;
-
 export interface HandlerContext {
   logger: Logger;
-  scope: TransactionalScope;
+  scope: ITransactionalScope;
 }
 
 export interface IUniformRetryOpts {
@@ -99,7 +122,7 @@ export interface ExecuteOpts {
   transient?: boolean;
   timeout?: number;
   delayUntilNextTick?: boolean;
-  scope?: TransactionalScope;
+  scope?: ITransactionalScope;
   streamId?: string;
   eventId?: string;
 }
@@ -151,7 +174,7 @@ export interface ICommandBus extends ServiceWithLifecycleHandlers {
   registeredCommands: Constructor<ICommand>[];
 
   registerDecorator(decorator: IDecorator): void;
-  drain(): Promise<void>;
+  drain(ignoredEventIds?: string[]): Promise<void>;
   deserializeCommand(commands: IPersistedEvent): ICommand;
   executeSync<TPayload, TCommandRes extends AnyEither>(
     command: ICommand<TPayload, TCommandRes>,

@@ -1,11 +1,3 @@
-import { left } from "fp-ts/lib/Either.js";
-import type { Observable } from "rxjs";
-import { filter } from "rxjs/operators";
-import type { Connection } from "typeorm";
-import { v4 as uuid } from "uuid";
-
-import { ApplicationError } from "./errors.js";
-import type { IScopeProvider } from "./infrastructure/types.js";
 import type {
   AnyEither,
   ClassContextProvider,
@@ -20,22 +12,13 @@ import type {
   ISerializedEvent,
   StringEither,
 } from "./types.js";
+
+import { ApplicationError } from "./errors.js";
 import { CQRSEventType } from "./types.js";
-
-interface IScopeOpts {
-  type: "inmem" | "pg";
-  name?: string;
-  connectionProvider?: (name?: string) => Connection;
-}
-
-export const createScopeProvider =
-  ({ name, type, connectionProvider }: IScopeOpts): IScopeProvider =>
-  () => {
-    if (type === "pg" && connectionProvider) {
-      return connectionProvider(name).manager;
-    }
-    return {} as any;
-  };
+import type { Observable } from "rxjs";
+import { filter } from "rxjs/operators";
+import { left } from "fp-ts/lib/Either.js";
+import { v4 as uuid } from "uuid";
 
 export const ofType = <TInput extends IEvent, TOutput extends IEvent>(...events: Constructor<TOutput>[]) => {
   const isInstanceOf = (event: IEvent): event is TOutput =>

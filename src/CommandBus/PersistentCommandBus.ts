@@ -1,39 +1,39 @@
-import { serializeError } from "serialize-error";
-import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
-import type { Left } from "fp-ts/lib/Either.js";
-import { isLeft, left, right } from "fp-ts/lib/Either.js";
-import type { Subscription } from "rxjs";
-import { v4 as uuid } from "uuid";
-
-import { deserializeEvent, serializeEvent } from "../common.js";
-import { EventIdMissingError } from "../errors.js";
-import type { IEventStore, IScopeProvider } from "../infrastructure/types.js";
 import type {
   AnyEither,
   ExecuteOpts,
   ICommand,
   ICommandBus,
   ICommandHandler,
+  IPersistentSettingsWithClient,
   StringEither,
   VoidEither,
 } from "../types.js";
-import type { IMeteredCommandHandlerResult } from "./BaseCommandBus.js";
+import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
+import { deserializeEvent, serializeEvent } from "../common.js";
+import { isLeft, left, right } from "fp-ts/lib/Either.js";
+
 import { BaseCommandBus } from "./BaseCommandBus.js";
+import { EventIdMissingError } from "../errors.js";
+import type { IEventStore } from "../infrastructure/types.js";
+import type { IMeteredCommandHandlerResult } from "./BaseCommandBus.js";
+import type { Left } from "fp-ts/lib/Either.js";
+import type { Subscription } from "rxjs";
+import { serializeError } from "serialize-error";
+import { v4 as uuid } from "uuid";
 
 export class PersistentCommandBus extends BaseCommandBus implements ICommandBus, ServiceWithLifecycleHandlers {
-  private pollingSubscription: Subscription;
+  private pollingSubscription?: Subscription;
 
   constructor(
     logger: Logger,
     private eventStore: IEventStore,
-    private scopeProvider: IScopeProvider,
+    private opts: IPersistentSettingsWithClient,
   ) {
     super(logger);
   }
 
-  public async drain(): Promise<void> {
-    const unprocessedEvents = await this.eventStore.findUnprocessedCommands();
-
+  public async drain(ignoredEventIds?: string[]): Promise<void> {
+    const unprocessedEvents = await this.eventStore.findUnprocessedCommands(ignoredEventIds);
     for (const event of unprocessedEvents) {
       const klass = this.registeredCommands.find(command => {
         return (command as any).name === event.eventName;
@@ -41,6 +41,7 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
       if (klass) {
         const deserialized = deserializeEvent(event.event, klass);
         this.logger.info(`Draining previous event: ${event.eventId} (${event.eventName})`);
+
         await this.replay(deserialized);
       }
     }
@@ -90,7 +91,7 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
     command.meta = { ...command.meta, eventId };
 
     if (transient) {
-      this.in$.next({ command, scope: opts?.scope || this.scopeProvider() });
+      this.in$.next({ command, scope: opts?.scope || this.opts.client });
       return right(streamId) as TRes;
     }
 
@@ -105,7 +106,7 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
         type: "COMMAND",
       });
       if (!delayUntilNextTick) {
-        this.in$.next({ command, scope: opts?.scope || this.scopeProvider() });
+        this.in$.next({ command, scope: opts?.scope || this.opts.client });
       }
 
       return right(streamId) as TRes;
@@ -136,7 +137,7 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
     const now = new Date();
 
     try {
-      this.in$.next({ command, scope: this.scopeProvider() });
+      this.in$.next({ command, scope: this.opts.client });
 
       return right(streamId) as TRes;
     } catch (e) {

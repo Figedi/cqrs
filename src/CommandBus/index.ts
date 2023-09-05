@@ -1,18 +1,17 @@
-import type { Logger } from "@figedi/svc";
+import type { ICommandBus, IPersistenceSettingsWithClient } from "../types.js";
 
-import type { IEventStore, IScopeProvider } from "../infrastructure/types.js";
-import type { ICommandBus } from "../types.js";
+import type { IEventStore } from "../infrastructure/types.js";
 import { InMemoryCommandBus } from "./InMemoryCommandBus.js";
+import type { Logger } from "@figedi/svc";
 import { PersistentCommandBus } from "./PersistentCommandBus.js";
 
 export const createCommandBus = (
-  persistence: "inmem" | "pg",
+  opts: IPersistenceSettingsWithClient,
   eventStore: IEventStore,
   logger: Logger,
-  scopeProvider: IScopeProvider,
 ): ICommandBus => {
-  if (persistence === "inmem") {
+  if (opts.type === "inmem") {
     return new InMemoryCommandBus(logger);
   }
-  return new PersistentCommandBus(logger, eventStore, scopeProvider);
+  return new PersistentCommandBus(logger, eventStore, opts);
 };

@@ -1,4 +1,5 @@
 import { TimeoutExceededError, UnknownStreamIdError } from "../errors.js";
+
 import type { IEventStore } from "../infrastructure/types.js";
 import { sleep } from "./sleep.js";
 
@@ -26,7 +27,7 @@ export const createWaitUntilSettled =
       return Promise.race([
         process(),
         sleep(timeoutMs, true).then(() => {
-          throw new TimeoutExceededError("Timeout met while waiting for events to be processed");
+          throw new TimeoutExceededError("Timeout met while waiting for event-store to become settled");
         }),
       ]);
     }

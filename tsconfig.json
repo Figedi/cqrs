@@ -1,36 +1,27 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "target": "esnext",
-    "rootDir": "./src",
-    "sourceRoot": "./src",
-    "outDir": "./dist",
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "sourceMap": true,
-    "declaration": true,
-    "noImplicitAny": true,
-    "removeComments": true,
-    "strictNullChecks": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noImplicitReturns": true,
-    "forceConsistentCasingInFileNames": true,
+    "target": "es6",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
+    "isolatedModules": true,
     "skipLibCheck": true,
     "typeRoots": [
       "./node_modules/@types",
+      "./src/infrastructure/db/zapatos"
     ],
     "lib": [
       "esnext"
     ]
   },
+  "include": [
+    "**/*.ts",
+    "./src/infrastructure/db/zapatos/*.ts",
+  ],
   "exclude": [
     ".*",
-    "_*",
-    "dist",
-    "node_modules",
-    "tsup.config.ts"
+    "_*"
   ]
 }

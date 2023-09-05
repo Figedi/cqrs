@@ -1,9 +1,9 @@
-import type { Logger } from "@figedi/svc";
-import type { Job } from "node-schedule";
-import { scheduleJob } from "node-schedule";
-
 import type { Constructor, IEvent, IEventBus } from "../types.js";
 import { DayPassed, HourPassed, MinutePassed, WeekPassed } from "./internalEvents.js";
+
+import type { Job } from "node-schedule";
+import type { Logger } from "@figedi/svc";
+import { scheduleJob } from "node-schedule";
 
 export class TimeBasedEventScheduler {
   private jobs: Job[] = [];
@@ -16,7 +16,7 @@ export class TimeBasedEventScheduler {
   ) {}
 
   private dispatchEvent = (EventCtor: Constructor<IEvent>) => (): void => {
-    this.eventBus.execute(new EventCtor({ now: new Date() }), { transient: true }).catch(e => {
+    this.eventBus.execute(new EventCtor({ now: new Date() }), { transient: true }).catch((e: any) => {
       this.logger.error({ error: e }, `Unknown error while trying to dispatch time-passed event: ${e.message}`);
     });
   };

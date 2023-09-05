@@ -1,12 +1,12 @@
+import type { IEventStore } from "../infrastructure/types.js";
 import type { Logger } from "@figedi/svc";
 import { TimeoutExceededError } from "../errors.js";
-import type { IEventStore } from "../infrastructure/types.js";
 import { sleep } from "./sleep.js";
 
 export const createWaitUntilIdle =
   (eventStore: IEventStore) =>
   async (logger: Logger, maxTimeoutMs = 60000, idleTimeoutMs = 500, stepMs = 100) => {
-    const findUnprocessedCommands = () => eventStore.findUnprocessedCommands(["eventId"]);
+    const findUnprocessedCommands = () => eventStore.findUnprocessedCommands(undefined, ["eventId"]);
 
     const process = async () => {
       // eslint-disable-next-line no-constant-condition
@@ -30,7 +30,7 @@ export const createWaitUntilIdle =
       return Promise.race([
         process(),
         sleep(maxTimeoutMs, true).then(() => {
-          throw new TimeoutExceededError("Timeout met while waiting for events to be processed");
+          throw new TimeoutExceededError("Timeout met while waiting for event-store to become idle");
         }),
       ]);
     }

@@ -1,9 +1,9 @@
+import type { ClassContextProvider, ExecuteOpts, IEvent, IEventBus, StringEither } from "../types.js";
+
+import { BaseEventBus } from "./BaseEventBus.js";
 import type { Logger } from "@figedi/svc";
 import { right } from "fp-ts/lib/Either.js";
 import { v4 as uuid } from "uuid";
-
-import type { ClassContextProvider, ExecuteOpts, IEvent, IEventBus, StringEither } from "../types.js";
-import { BaseEventBus } from "./BaseEventBus.js";
 
 export class InMemoryEventBus extends BaseEventBus implements IEventBus {
   constructor(

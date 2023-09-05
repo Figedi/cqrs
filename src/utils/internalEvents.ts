@@ -1,5 +1,5 @@
-import { createEvent } from "../common.js";
 import type { StringEither } from "../types.js";
+import { createEvent } from "../common.js";
 
 export interface ITimePassedPayload {
   now: Date;

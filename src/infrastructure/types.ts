@@ -1,18 +1,8 @@
-import type {
-  AnyEither,
-  ExecuteOpts,
-  ICommand,
-  IMeta,
-  ISerializedEvent,
-  StringEither,
-  TransactionalScope,
-} from "../types.js";
+import type { AnyEither, ExecuteOpts, ICommand, IMeta, ISerializedEvent, StringEither } from "../types.js";
 
 export interface IScheduleOptions extends ExecuteOpts {
   executeSync?: boolean;
 }
-
-export type IScopeProvider = () => TransactionalScope;
 
 export interface IEventScheduler {
   scheduleCommand<TPayload extends Record<string, any>, TRes extends AnyEither>(
@@ -28,6 +18,7 @@ export interface IEventScheduler {
 }
 
 export type EventTypes = "COMMAND" | "QUERY" | "EVENT";
+
 export interface IPersistedEvent<TEventPayload = any, TMeta extends IMeta = IMeta> {
   eventId: string;
   eventName: string;
@@ -40,10 +31,10 @@ export interface IPersistedEvent<TEventPayload = any, TMeta extends IMeta = IMet
 }
 
 export interface IEventStore {
-  withTransactionalScope(scopeProvider: IScopeProvider): IEventStore;
   insert(event: IPersistedEvent): Promise<void>;
   updateByEventId(eventId: string, event: Partial<IPersistedEvent>): Promise<void>;
   findUnprocessedCommands<TKeys extends keyof IPersistedEvent>(
+    ignoredEventIds?: string[],
     fields?: TKeys[],
   ): Promise<Pick<IPersistedEvent, TKeys>[]>;
   findByEventIds<TKeys extends keyof IPersistedEvent>(

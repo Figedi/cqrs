@@ -4,8 +4,15 @@
   "description": "Yet another cqrs implementation",
   "license": "MIT",
   "author": "Felix Kaminski",
-  "main": "dist/index.js",
   "type": "module",
+  "exports": {
+    ".": {
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "dist/index.cjs",
+  "types": "./dist/index.d.ts",
   "scripts": {
     "build": "rm -rf ./dist && tsup",
     "format": "run-s format:imports format:package-json format:prettier format:eslint",
@@ -25,18 +32,16 @@
     "pg": "^8.7.3",
     "rxjs": "^7.8.1",
     "serialize-error": "^11.0.2",
-    "typeorm": "^0.3.4",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "zapatos": "^6.1.4"
   },
   "devDependencies": {
-    "tsup": "^7.2.0",
-    "pino": "^8.15.0",
     "@types/chai": "^4.3.0",
+    "@types/lodash-es": "^4.17.9",
     "@types/mocha": "^10.0.1",
     "@types/node-schedule": "^2.1.0",
     "@types/sinon": "^10.0.11",
     "@types/uuid": "^9.0.3",
-    "@types/lodash-es": "^4.17.9",
     "@typescript-eslint/eslint-plugin": "^6.5.0",
     "@typescript-eslint/parser": "^6.5.0",
     "chai": "^4.3.6",
@@ -52,10 +57,12 @@
     "import-sort-style-module": "^6.0.0",
     "mocha": "^10.2.0",
     "npm-run-all": "^4.1.5",
+    "pino": "^8.15.0",
     "prettier": "^3.0.3",
     "sinon": "^15.2.0",
     "sort-package-json": "^2.5.1",
     "ts-node": "^10.7.0",
+    "tsup": "^7.2.0",
     "typescript": "^5.2.2"
   }
 }

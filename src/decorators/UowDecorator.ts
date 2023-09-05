@@ -1,11 +1,5 @@
-import type { Logger } from "@figedi/svc";
-import { isLeft, left } from "fp-ts/lib/Either.js";
-import { random } from "lodash-es";
-import type { EntityManager } from "typeorm";
-import type { IsolationLevel } from "typeorm/driver/types/IsolationLevel.js";
+import * as db from "zapatos/db";
 
-import { isCommandHandler, mergeObjectContext, mergeWithParentCommand } from "../common.js";
-import { TxTimeoutError } from "../errors.js";
 import type {
   AnyEither,
   ClassContextProvider,
@@ -15,8 +9,15 @@ import type {
   IDecorator,
   IQuery,
   IQueryHandler,
+  ITransactionalScope,
   StringEither,
 } from "../types.js";
+import { isCommandHandler, mergeObjectContext, mergeWithParentCommand } from "../common.js";
+import { isLeft, left } from "fp-ts/lib/Either.js";
+
+import type { Logger } from "@figedi/svc";
+import { TxTimeoutError } from "../errors.js";
+import { random } from "lodash-es";
 import { sleep } from "../utils/sleep.js";
 
 enum ErrorCodes {
@@ -25,7 +26,7 @@ enum ErrorCodes {
 
 export interface UowTxSettings {
   enabled: boolean;
-  isolation?: IsolationLevel;
+  isolationLevel?: db.IsolationLevel;
   timeoutMs: number | undefined;
   maxRetries: number;
   sleepRange: {
@@ -115,8 +116,8 @@ export class UowDecorator implements IDecorator {
 
     // eslint-disable-next-line no-param-reassign
     handler.handle = async (commandOrQuery: T, ctx: HandlerContext) => {
-      const process = async (em: EntityManager) => {
-        const scopedCtx = { ...ctx, scope: em };
+      const process = async (scope: ITransactionalScope) => {
+        const scopedCtx = { ...ctx, scope };
         const result = (await originalHandle(commandOrQuery, scopedCtx)) as TRes;
         await this.maybePublishCommandEvents(commandOrQuery, result, handler, scopedCtx, false);
         return result;
@@ -125,7 +126,7 @@ export class UowDecorator implements IDecorator {
       const processWithoutTx = async (): Promise<TRes> => {
         try {
           return await process(ctx.scope);
-        } catch (e) {
+        } catch (e: any) {
           ctx.logger.error(
             { error: e },
             `Unknown error in uow-decorator for handler: ${commandOrQuery.meta.className} ` +
@@ -136,36 +137,34 @@ export class UowDecorator implements IDecorator {
       };
 
       const processInTx = async (tries = 0): Promise<TRes> => {
-        const queryRunner =
-          (ctx.scope.queryRunner && !ctx.scope.queryRunner.isReleased && ctx.scope.queryRunner) ||
-          ctx.scope.connection.createQueryRunner();
-
         try {
-          await queryRunner.connect();
-          await queryRunner.startTransaction(this.txSettings.isolation || "REPEATABLE READ");
+          return await db.transaction(
+            ctx.scope,
+            this.txSettings.isolationLevel ?? db.IsolationLevel.Serializable,
+            async txScope => {
+              const result = this.txSettings.timeoutMs
+                ? await Promise.race([
+                    process(txScope),
+                    sleep(this.txSettings.timeoutMs).then(() => {
+                      throw new TxTimeoutError(
+                        `Timeout for ${commandOrQuery.meta.className} (${commandOrQuery.meta.eventId})`,
+                        ErrorCodes.TIMEOUT,
+                      );
+                    }),
+                  ])
+                : await process(txScope);
 
-          const result = this.txSettings.timeoutMs
-            ? await Promise.race([
-                process(queryRunner.manager),
-                sleep(this.txSettings.timeoutMs).then(() => {
-                  throw new TxTimeoutError(
-                    `Timeout for ${commandOrQuery.meta.className} (${commandOrQuery.meta.eventId})`,
-                    ErrorCodes.TIMEOUT,
-                  );
-                }),
-              ])
-            : await process(queryRunner.manager);
-
-          /**
-           * in case of a left result, the tx must be rolled back,
-           * thus we throw to catch it in the following rollback block
-           */
-          if (isLeft(result)) {
-            throw result.left;
-          }
-          await queryRunner.commitTransaction();
-          return result;
-        } catch (e) {
+              /**
+               * in case of a left result, the tx must be rolled back,
+               * thus we throw to catch it in the following rollback block
+               */
+              if (isLeft(result)) {
+                throw result.left;
+              }
+              return result;
+            },
+          );
+        } catch (e: any) {
           const isConcurrentUpdateError = e.code === "40001";
           const isDeadlockError = e.code === "40P01";
           const isTimeoutError = e.code === ErrorCodes.TIMEOUT;
@@ -176,7 +175,6 @@ export class UowDecorator implements IDecorator {
             );
           }
 
-          await queryRunner.rollbackTransaction();
           /**
            * Resolve deadlocks, concurrent-updates or timeouts (which could result from a deadlock),
            * by simply retrying later
@@ -193,14 +191,9 @@ export class UowDecorator implements IDecorator {
 
             await sleep(sleepTimeMs);
             // execute the finally block before the return
-            await queryRunner.manager.release();
-            await queryRunner.release();
             return await processInTx(tries + 1);
           }
           return left(e) as TRes;
-        } finally {
-          await queryRunner.manager.release();
-          await queryRunner.release();
         }
       };
 

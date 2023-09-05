@@ -1,9 +1,10 @@
+import type { IEventStore } from "./types.js";
+import type { IPersistenceSettingsWithClient } from "../types.js";
 import { PersistentEventStore } from "./PersistentEventStore.js";
-import type { IEventStore, IScopeProvider } from "./types.js";
 
-export const createEventStore = (persistence: "inmem" | "pg", scopeProvider: IScopeProvider): IEventStore => {
-  if (persistence === "pg") {
-    return new PersistentEventStore(scopeProvider);
+export const createEventStore = (opts: IPersistenceSettingsWithClient): IEventStore => {
+  if (opts.type === "pg") {
+    return new PersistentEventStore(opts);
   }
   throw new Error("inmem persistence not yet supported for eventStore");
 };

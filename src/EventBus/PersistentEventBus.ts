@@ -1,12 +1,12 @@
-import { serializeError } from "serialize-error";
-import type { Logger } from "@figedi/svc";
-import { left, right } from "fp-ts/lib/Either.js";
-import { v4 as uuid } from "uuid";
-
-import { serializeEvent } from "../common.js";
-import type { IEventStore } from "../infrastructure/types.js";
 import type { ClassContextProvider, ExecuteOpts, IEvent, IEventBus, StringEither } from "../types.js";
+import { left, right } from "fp-ts/lib/Either.js";
+
 import { BaseEventBus } from "./BaseEventBus.js";
+import type { IEventStore } from "../infrastructure/types.js";
+import type { Logger } from "@figedi/svc";
+import { serializeError } from "serialize-error";
+import { serializeEvent } from "../common.js";
+import { v4 as uuid } from "uuid";
 
 export class PersistentEventBus extends BaseEventBus implements IEventBus {
   constructor(
@@ -67,7 +67,6 @@ export class PersistentEventBus extends BaseEventBus implements IEventBus {
         timestamp: now,
         type: "EVENT",
       });
-
       this.in$.next(event);
 
       return right(streamId) as TRes;

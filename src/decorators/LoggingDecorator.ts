@@ -1,6 +1,3 @@
-import type { Logger } from "@figedi/svc";
-import { isLeft } from "fp-ts/lib/Either.js";
-
 import type {
   AnyEither,
   HandlerContext,
@@ -10,7 +7,10 @@ import type {
   IQuery,
   IQueryHandler,
 } from "../types.js";
+
 import { CQRSEventType } from "../types.js";
+import type { Logger } from "@figedi/svc";
+import { isLeft } from "fp-ts/lib/Either.js";
 
 export const convertTimingsToMs = ([seconds, nanoseconds]: number[]): number =>
   ((seconds * 1e9 + nanoseconds) / 1e6) | 0;
@@ -47,7 +47,7 @@ export class LoggingDecorator implements IDecorator {
           logger.debug({ processingTimeMS: timeTaken }, `Processed ${eventType} (${commandOrQuery.meta.className})`);
         }
         return result;
-      } catch (e) {
+      } catch (e: any) {
         logger.error(
           { error: e },
           `Unknown error while processing ${eventType} (${commandOrQuery.meta.className}): ${e.message}`,

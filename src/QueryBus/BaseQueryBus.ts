@@ -1,11 +1,11 @@
-import type { Observable } from "rxjs";
+import type { AnyEither, Constructor, IDecorator, IQuery, IQueryHandler } from "../types.js";
 import { Subject, merge } from "rxjs";
-import { filter } from "rxjs/operators";
-import { deserializeEvent } from "../common.js";
+
 import { ApplicationError } from "../errors.js";
 import type { IPersistedEvent } from "../infrastructure/types.js";
-
-import type { AnyEither, Constructor, IDecorator, IQuery, IQueryHandler } from "../types.js";
+import type { Observable } from "rxjs";
+import { deserializeEvent } from "../common.js";
+import { filter } from "rxjs/operators";
 
 export class BaseQueryBus {
   protected topics$: Record<

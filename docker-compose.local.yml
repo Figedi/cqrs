@@ -6,13 +6,7 @@ services:
       - ./db/pg/:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-    env_file:
-      - .env
     environment:
-      POSTGRES_DB: $PG_DB
-      POSTGRES_USER: $PG_USER_NAME
-      POSTGRES_PASSWORD: $PG_PASSWORD
-      PG_HOST: postgres
       PGDATA: /var/lib/postgresql/data/pgdata
     networks:
       - main
