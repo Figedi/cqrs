@@ -7,20 +7,16 @@ on:
 jobs:
   build_and_push:
     runs-on: ubuntu-latest
-    # Service containers to run with `container-job`
     services:
-      # Label used to access the service container
       postgres:
-        # Docker Hub image
         image: postgres:15.1-alpine
-        
-        # Provide the password for postgres
+        ports: 
+          - 5432:5432
         env:
           POSTGRES_DB: postgres
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           PG_HOST: localhost
-        # Set health checks to wait until postgres has started
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -53,7 +49,7 @@ jobs:
       - name: Run specs
         run: npm run specs
         env: 
-          DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
       - name: Semantic Release
         uses: cycjimmy/semantic-release-action@v3
