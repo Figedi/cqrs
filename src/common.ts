@@ -11,6 +11,7 @@ import type {
   IQueryHandler,
   ISerializedEvent,
   StringEither,
+  IEventMeta,
 } from "./types.js";
 
 import { ApplicationError } from "./errors.js";
@@ -78,14 +79,20 @@ export const mergeObjectContext = <T extends IQuery | ICommand | IEvent>(
 
 export const createQuery = <TPayload, TRes extends AnyEither = AnyEither>(streamId?: string, name?: string) => {
   const C = class implements IQuery<TPayload, TRes> {
-    public meta = {
+    public meta: IEventMeta = {
       classType: CQRSEventType.QUERY,
       className: this.className,
       streamId,
       eventId: uuid(),
+      transient: false,
     };
 
-    constructor(public payload: TPayload) {}
+    constructor(
+      public payload: TPayload,
+      meta?: Partial<Pick<IEventMeta, "transient">>,
+    ) {
+      this.meta = { ...this.meta, ...meta };
+    }
 
     public get className() {
       return name || this.constructor.name;
@@ -103,14 +110,20 @@ export const createQuery = <TPayload, TRes extends AnyEither = AnyEither>(stream
 
 export const createEvent = <TPayload, TRes extends StringEither = StringEither>(streamId?: string, name?: string) => {
   const C = class implements IEvent<TPayload, TRes> {
-    public meta = {
+    public meta: IEventMeta = {
       classType: CQRSEventType.EVENT,
       className: this.className,
       streamId,
       eventId: uuid(),
+      transient: false,
     };
 
-    constructor(public payload: TPayload) {}
+    constructor(
+      public payload: TPayload,
+      meta?: Partial<Pick<IEventMeta, "transient">>,
+    ) {
+      this.meta = { ...this.meta, ...meta };
+    }
 
     public get className() {
       return name || this.constructor.name;
@@ -143,14 +156,20 @@ export const mergeWithParentCommand = (event: IEvent, parent: ICommand): IEvent 
 
 export const createCommand = <TPayload, TRes extends AnyEither = AnyEither>(streamId?: string, name?: string) => {
   const C = class implements ICommand<TPayload, TRes> {
-    public meta = {
+    public meta: IEventMeta = {
       classType: CQRSEventType.COMMAND,
       className: this.className,
       streamId,
       eventId: uuid(),
+      transient: false,
     };
 
-    constructor(public payload: TPayload) {}
+    constructor(
+      public payload: TPayload,
+      meta?: Partial<Pick<IEventMeta, "transient">>,
+    ) {
+      this.meta = { ...this.meta, ...meta };
+    }
 
     public get className() {
       return name || this.constructor.name;

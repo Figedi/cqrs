@@ -24,7 +24,7 @@ export enum CQRSEventType {
   EVENT = "EVENT",
 }
 
-interface IEventMeta {
+export interface IEventMeta {
   className: string;
   classType: CQRSEventType;
   streamId?: string;

@@ -446,7 +446,7 @@ describe("cqrsModule", () => {
         ];
         await db.insert("events", events as any).run(pool);
 
-        await cqrsModule.commandBus.drain([cmd1.meta.eventId]);
+        await cqrsModule.commandBus.drain([cmd1.meta.eventId!]);
         await cqrsModule.waitUntilSettled([events[1].stream_id]);
         assert.notCalled(cmdCb1);
         assert.calledOnce(cmdCb2);
