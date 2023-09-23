@@ -13,7 +13,7 @@ import { deserializeEvent, serializeEvent } from "../common.js";
 import { isLeft, left, right } from "fp-ts/lib/Either.js";
 
 import { BaseCommandBus } from "./BaseCommandBus.js";
-import { EventIdMissingError } from "../errors.js";
+import { EventByIdNotFoundError, EventIdMissingError, NoHandlerFoundError } from "../errors.js";
 import type { IEventStore } from "../infrastructure/types.js";
 import type { IMeteredCommandHandlerResult } from "./BaseCommandBus.js";
 import type { Left } from "fp-ts/lib/Either.js";
@@ -66,8 +66,12 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
   }
 
   private processComandResult = async (commandResult: IMeteredCommandHandlerResult<AnyEither>) => {
+    const status = isLeft(commandResult.payload) ? "FAILED" : "PROCESSED";
     await this.eventStore.updateByEventId(commandResult.eventId, {
-      status: isLeft(commandResult.payload) ? "FAILED" : "PROCESSED",
+      status,
+      meta: isLeft(commandResult.payload)
+        ? { error: serializeError(commandResult.payload.left), lastCalled: new Date() }
+        : {},
     });
   };
 
@@ -121,35 +125,51 @@ export class PersistentCommandBus extends BaseCommandBus implements ICommandBus,
     await this.eventStore.updateByEventId(eventId, {
       status: "FAILED",
       meta: {
+        lastCalled: new Date(),
         error: serializeError(leftResult.left),
       },
     });
   }
 
+  public async replayAllFailed(opts?: ExecuteOpts): Promise<void> {
+    const events = await this.eventStore.find({ status: "FAILED", type: "COMMAND" });
+    for (const event of events) {
+      this.logger.info({ eventId: event.eventId, eventName: event.eventName }, "Replaying failed command");
+      await this.replay(event.eventId, opts);
+    }
+  }
+
   public async replay<T, TRes extends StringEither, TCommandRes extends VoidEither>(
-    command: ICommand<T, TCommandRes>,
+    commandOrEventId: string | ICommand<T, TCommandRes>,
+    opts?: ExecuteOpts,
   ): Promise<TRes> {
+    let command: ICommand<T, TCommandRes>;
+    if (typeof commandOrEventId === "string") {
+      const [event] = await this.eventStore.findByEventIds([commandOrEventId], undefined, "COMMAND");
+      if (!event) {
+        throw new EventByIdNotFoundError(`Did not find command by id ${commandOrEventId}`);
+      }
+      const klass = this.registeredCommands.find(cmd => {
+        return cmd.name === event.eventName;
+      });
+      if (!klass) {
+        throw new NoHandlerFoundError(`No command was registered for command ${event.eventName}`);
+      }
+      const deserializedEvent = deserializeEvent(event.event, klass);
+
+      command = deserializedEvent as ICommand<T, TCommandRes>;
+    } else {
+      command = commandOrEventId;
+    }
     const eventId = command.meta?.eventId;
-    const streamId = command.meta?.streamId || command.meta?.eventId;
     if (!eventId) {
       throw new EventIdMissingError("Need at least an eventId, was this command properly deserialized?");
     }
-    const now = new Date();
-
-    try {
-      this.in$.next({ command, scope: this.opts.client });
-
-      return right(streamId) as TRes;
-    } catch (e) {
-      await this.eventStore.updateByEventId(eventId, {
-        status: "FAILED",
-        meta: {
-          lastCalled: now,
-          error: serializeError(e),
-        },
-      });
-      return left(e) as TRes;
-    }
+    await this.eventStore.updateByEventId(eventId, {
+      status: "CREATED",
+      meta: {},
+    });
+    return this.execute(command, { ...opts, transient: true });
   }
 
   public async executeSync<T, TRes extends AnyEither, TCommandRes extends AnyEither>(

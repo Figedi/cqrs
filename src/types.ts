@@ -184,8 +184,9 @@ export interface ICommandBus extends ServiceWithLifecycleHandlers {
     command: ICommand<TPayload, TCommandRes>,
     opts?: ExecuteOpts,
   ): Promise<TRes>;
+  replayAllFailed(opts?: ExecuteOpts): Promise<void>;
   replay<TPayload, TRes extends StringEither, TCommandRes extends AnyEither>(
-    command: ICommand<TPayload, TCommandRes>,
+    commandOrEventId: string | ICommand<TPayload, TCommandRes>,
   ): Promise<TRes>;
   register(...handlers: ICommandHandler<any, any>[]): void;
   stream(topic?: string): Observable<ICommand>;

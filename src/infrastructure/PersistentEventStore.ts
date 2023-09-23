@@ -25,7 +25,7 @@ export class PersistentEventStore implements IEventStore {
     }
   }
 
-  public async insert(event: IPersistedEvent): Promise<void> {
+  public async insert(event: IPersistedEvent, { allowUpsert = false } = {}): Promise<void> {
     const insertable = omitBy(
       {
         event_id: event.eventId,
@@ -39,7 +39,31 @@ export class PersistentEventStore implements IEventStore {
       },
       isNil,
     ) as any;
-    await db.insert("events", insertable).run(this.pool);
+    if (allowUpsert) {
+      await db.upsert("events", insertable, ["event_id"]).run(this.pool);
+    } else {
+      await db.insert("events", insertable).run(this.pool);
+    }
+  }
+
+  public async find(query: Partial<IPersistedEvent>): Promise<IPersistedEvent[]> {
+    if (!Object.keys(query).length) {
+      return [];
+    }
+    const searchQuery = omitBy(
+      {
+        event_id: query.eventId,
+        event_name: query.eventName,
+        stream_id: query.streamId,
+        timestamp: query.timestamp,
+        status: query.status,
+        type: query.type,
+      },
+      isNil,
+    );
+    const rows = await db.select("events", searchQuery).run(this.pool);
+
+    return rows.map(this.mapRowToEvent);
   }
 
   public async updateByEventId(eventId: string, event: Partial<IPersistedEvent>): Promise<void> {

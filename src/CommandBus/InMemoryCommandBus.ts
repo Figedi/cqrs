@@ -23,10 +23,15 @@ export class InMemoryCommandBus extends BaseCommandBus implements ICommandBus {
     return right(streamId) as TRes;
   }
 
+  public async replayAllFailed() {
+    throw new Error("Not supported");
+  }
+
   public async replay<T, TRes extends StringEither, TCommandRes extends VoidEither>(
     command: ICommand<T, TCommandRes>,
+    opts?: ExecuteOpts,
   ): Promise<TRes> {
-    return this.execute(command);
+    return this.execute(command, opts);
   }
 
   public async executeSync<T, TRes extends AnyEither, TCommandRes extends AnyEither>(

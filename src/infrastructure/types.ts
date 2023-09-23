@@ -31,7 +31,7 @@ export interface IPersistedEvent<TEventPayload = any, TMeta extends IMeta = IMet
 }
 
 export interface IEventStore {
-  insert(event: IPersistedEvent): Promise<void>;
+  insert(event: IPersistedEvent, opts?: { allowUpsert?: boolean }): Promise<void>;
   updateByEventId(eventId: string, event: Partial<IPersistedEvent>): Promise<void>;
   findUnprocessedCommands<TKeys extends keyof IPersistedEvent>(
     ignoredEventIds?: string[],
@@ -42,6 +42,7 @@ export interface IEventStore {
     fields?: TKeys[],
     type?: EventTypes,
   ): Promise<Pick<IPersistedEvent, TKeys>[]>;
+  find(query: Partial<IPersistedEvent>): Promise<IPersistedEvent[]>;
   findByStreamIds<TKeys extends keyof IPersistedEvent>(
     streamIds: string[],
     fields?: TKeys[],

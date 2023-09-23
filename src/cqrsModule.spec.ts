@@ -452,6 +452,89 @@ describe("cqrsModule", () => {
         assert.calledOnce(cmdCb2);
       });
 
+      it("replays events", async () => {
+        const cmdCb1 = stub();
+        const cmdCb2 = stub();
+        const ExampleCommandHandler = createExampleCommandHandler(cmdCb1, ExampleCommand);
+        const OtherCommandHandler = createExampleCommandHandler(cmdCb2, OtherCommand);
+        cqrsModule.commandBus.register(new ExampleCommandHandler());
+        cqrsModule.commandBus.register(new OtherCommandHandler());
+        const cmd1 = new ExampleCommand({ id: ID, type: "command1" });
+        const cmd2 = new OtherCommand({ id: ID, type: "command2" });
+        const events = [
+          {
+            event_id: cmd1.meta.eventId,
+            stream_id: cmd1.meta.streamId ?? uuid(),
+            event_name: cmd1.meta.className,
+            event: db.param(serializeEvent(cmd1) as {}, true),
+            timestamp: new Date(),
+            meta: { error: "some previous error" },
+            status: "FAILED",
+            type: "COMMAND",
+          },
+          {
+            event_id: cmd2.meta.eventId,
+            stream_id: cmd2.meta.streamId ?? uuid(),
+            event_name: cmd2.meta.className,
+            event: db.param(serializeEvent(cmd2) as {}, true),
+            timestamp: new Date(),
+            status: "PROCESSED",
+            type: "COMMAND",
+          },
+        ];
+        await db.insert("events", events as any).run(pool);
+
+        await cqrsModule.commandBus.replay(events[0].event_id!);
+        await cqrsModule.waitUntilSettled([events[0].stream_id!]);
+        assert.calledOnce(cmdCb1);
+        assert.notCalled(cmdCb2);
+        const [res] = await db.select("events", { event_id: events[0].event_id }).run(pool);
+
+        expect(res.meta).to.deep.eq({});
+        expect(res.status).to.eq("PROCESSED");
+      });
+      it("replays failed events", async () => {
+        const cmdCb1 = stub();
+        const cmdCb2 = stub();
+        const ExampleCommandHandler = createExampleCommandHandler(cmdCb1, ExampleCommand);
+        const OtherCommandHandler = createExampleCommandHandler(cmdCb2, OtherCommand);
+        cqrsModule.commandBus.register(new ExampleCommandHandler());
+        cqrsModule.commandBus.register(new OtherCommandHandler());
+        const cmd1 = new ExampleCommand({ id: ID, type: "command1" });
+        const cmd2 = new OtherCommand({ id: ID, type: "command2" });
+        const events = [
+          {
+            event_id: cmd1.meta.eventId,
+            stream_id: cmd1.meta.streamId ?? uuid(),
+            event_name: cmd1.meta.className,
+            event: db.param(serializeEvent(cmd1) as {}, true),
+            timestamp: new Date(),
+            meta: { error: "some previous error" },
+            status: "FAILED",
+            type: "COMMAND",
+          },
+          {
+            event_id: cmd2.meta.eventId,
+            stream_id: cmd2.meta.streamId ?? uuid(),
+            event_name: cmd2.meta.className,
+            event: db.param(serializeEvent(cmd2) as {}, true),
+            timestamp: new Date(),
+            status: "PROCESSED",
+            type: "COMMAND",
+          },
+        ];
+        await db.insert("events", events as any).run(pool);
+
+        await cqrsModule.commandBus.replayAllFailed();
+        await cqrsModule.waitUntilSettled([events[0].stream_id!, events[1].stream_id]);
+        assert.calledOnce(cmdCb1);
+        assert.notCalled(cmdCb2);
+        const [res] = await db.select("events", { event_id: events[0].event_id }).run(pool);
+
+        expect(res.meta).to.deep.eq({});
+        expect(res.status).to.eq("PROCESSED");
+      });
+
       it("works with custom sagas", async () => {
         /**
          * scenario:
