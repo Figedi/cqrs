@@ -1,5 +1,3 @@
-import * as db from "zapatos/db";
-
 import type {
   AnyEither,
   ClassContextProvider,
@@ -8,17 +6,16 @@ import type {
   ICommandHandler,
   IDecorator,
   IQuery,
-  IQueryHandler,
-  ITransactionalScope,
-  StringEither,
+  IQueryHandler, Logger,
+  StringEither
 } from "../types.js";
 import { isCommandHandler, mergeObjectContext, mergeWithParentCommand } from "../common.js";
 import { isLeft, left } from "fp-ts/lib/Either.js";
-
-import type { Logger } from "@figedi/svc";
 import { TxTimeoutError } from "../errors.js";
 import { random } from "lodash-es";
 import { sleep } from "../utils/sleep.js";
+import { IsolationLevel } from "../infrastructure/db/adapter.js";
+import { Client } from "pg";
 
 enum ErrorCodes {
   TIMEOUT = "TIMEOUT",
@@ -26,7 +23,7 @@ enum ErrorCodes {
 
 export interface UowTxSettings {
   enabled: boolean;
-  isolationLevel?: db.IsolationLevel;
+  isolationLevel?: IsolationLevel;
   timeoutMs: number | undefined;
   maxRetries: number;
   sleepRange: {
@@ -116,7 +113,7 @@ export class UowDecorator implements IDecorator {
 
     // eslint-disable-next-line no-param-reassign
     handler.handle = async (commandOrQuery: T, ctx: HandlerContext) => {
-      const process = async (scope: ITransactionalScope) => {
+      const process = async (scope: Client) => {
         const scopedCtx = { ...ctx, scope };
         const result = (await originalHandle(commandOrQuery, scopedCtx)) as TRes;
         await this.maybePublishCommandEvents(commandOrQuery, result, handler, scopedCtx, false);
@@ -125,7 +122,9 @@ export class UowDecorator implements IDecorator {
 
       const processWithoutTx = async (): Promise<TRes> => {
         try {
-          return await process(ctx.scope);
+          // If scope is an adapter, get a client from it
+          const client = ctx.scope;
+          return await process(client);
         } catch (e: any) {
           ctx.logger.error(
             { error: e },
@@ -137,33 +136,38 @@ export class UowDecorator implements IDecorator {
       };
 
       const processInTx = async (tries = 0): Promise<TRes> => {
-        try {
-          return await db.transaction(
-            ctx.scope,
-            this.txSettings.isolationLevel ?? db.IsolationLevel.Serializable,
-            async txScope => {
-              const result = this.txSettings.timeoutMs
-                ? await Promise.race([
-                    process(txScope),
-                    sleep(this.txSettings.timeoutMs).then(() => {
-                      throw new TxTimeoutError(
-                        `Timeout for ${commandOrQuery.meta.className} (${commandOrQuery.meta.eventId})`,
-                        ErrorCodes.TIMEOUT,
-                      );
-                    }),
-                  ])
-                : await process(txScope);
+        const isolationLevel = this.txSettings.isolationLevel ?? IsolationLevel.Serializable;
 
-              /**
-               * in case of a left result, the tx must be rolled back,
-               * thus we throw to catch it in the following rollback block
-               */
-              if (isLeft(result)) {
-                throw result.left;
-              }
-              return result;
-            },
-          );
+        try {
+         
+
+          // If scope is already a client, run within the existing connection
+
+
+          // Manual transaction management for clients not in a transaction
+          await ctx.scope.query(`BEGIN ISOLATION LEVEL ${isolationLevel}`);
+          try {
+            const result = this.txSettings.timeoutMs
+              ? await Promise.race([
+                  process(ctx.scope),
+                  sleep(this.txSettings.timeoutMs).then(() => {
+                    throw new TxTimeoutError(
+                      `Timeout for ${commandOrQuery.meta.className} (${commandOrQuery.meta.eventId})`,
+                      ErrorCodes.TIMEOUT,
+                    );
+                  }),
+                ])
+              : await process(ctx.scope);
+
+            if (isLeft(result)) {
+              throw result.left;
+            }
+            await ctx.scope.query("COMMIT");
+            return result;
+          } catch (e) {
+            await ctx.scope.query("ROLLBACK");
+            throw e;
+          }
         } catch (e: any) {
           const isConcurrentUpdateError = e.code === "40001";
           const isDeadlockError = e.code === "40P01";

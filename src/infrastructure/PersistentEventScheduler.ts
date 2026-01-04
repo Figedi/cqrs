@@ -1,28 +1,24 @@
-import * as db from "zapatos/db";
-
 import type {
   AnyEither,
   ICommand,
   ICommandBus,
-  IInmemorySettings,
-  IPersistentSettingsWithClient,
+  IInmemorySettings, IPostgresSettings,
   ISerializedEvent,
+  Logger,
   ScheduledEventStatus,
-  StringEither,
+  ServiceWithLifecycleHandlers,
+  StringEither
 } from "../types.js";
 import type { IEventScheduler, IScheduleOptions } from "./types.js";
-import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
-import type { Pool, PoolClient } from "pg";
 import { deserializeEvent, serializeEvent } from "../common.js";
 
 import { isLeft } from "fp-ts/lib/Either.js";
 
 export class PersistentEventScheduler implements IEventScheduler, ServiceWithLifecycleHandlers {
   private schedules: Record<string, NodeJS.Timeout> = {};
-  private _pool?: Pool | PoolClient;
 
   constructor(
-    private opts: IPersistentSettingsWithClient,
+    private opts: IPostgresSettings,
     private commandBus: ICommandBus,
     private logger: Logger,
   ) {}
@@ -75,18 +71,12 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
       );
     }
 
-    const row = await db
-      .insert(
-        "scheduled_events",
-        {
-          scheduled_event_id: eventId,
-          execute_at: executeAt,
-          event: db.param(serializeEvent(command) as {}),
-          status: "CREATED",
-        },
-        { returning: ["scheduled_event_id"] },
-      )
-      .run(this.pool);
+    const { rows } = await this.client!.query<{ scheduled_event_id: string }>(
+      `INSERT INTO scheduled_events (scheduled_event_id, execute_at, event, status)
+       VALUES ($1, $2, $3, $4)
+       RETURNING scheduled_event_id`,
+      [eventId, executeAt, JSON.stringify(serializeEvent(command)), "CREATED"],
+    );
 
     const timer = setTimeout(this.onCommandExecute(command, onExecute, executeOpts), scheduleTime);
     timer.unref();
@@ -97,7 +87,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
       `Scheduled event w/ eventId ${eventId}, execution time will be at ${executeAt.toISOString()}`,
     );
 
-    return row.scheduled_event_id;
+    return rows[0].scheduled_event_id;
   }
 
   public async updateScheduledEventStatus(command: ICommand, status: ScheduledEventStatus): Promise<void> {
@@ -106,7 +96,10 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
     if (!eventId) {
       throw new Error("Passed command does not have an eventId, refusing to schedule it");
     }
-    await db.update("scheduled_events", { status }, { scheduled_event_id: eventId }).run(this.pool);
+    await this.client!.query(
+      `UPDATE scheduled_events SET status = $1 WHERE scheduled_event_id = $2`,
+      [status, eventId],
+    );
     const timer = this.schedules[eventId];
     if (status !== "CREATED" && timer) {
       clearTimeout(timer);
@@ -115,17 +108,17 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
   }
 
   public async reset(): Promise<number> {
-    const rows = await db
-      .update("scheduled_events", { status: "CREATED" }, { status: "ABORTED" }, { returning: ["scheduled_event_id"] })
-      .run(this.pool);
+    const { rows } = await this.client!.query<{ scheduled_event_id: string }>(
+      `UPDATE scheduled_events SET status = 'CREATED' WHERE status = 'ABORTED' RETURNING scheduled_event_id`,
+    );
     Object.values(this.schedules).forEach(clearTimeout);
     this.schedules = {};
     return rows.length || 0;
   }
 
   public async preflight() {
-    if (this.opts.runMigrations) {
-      await this.pool.query(`
+    if ((this.opts as IPostgresSettings).runMigrations) {
+      await this.client!.query(`
       CREATE TABLE IF NOT EXISTS "scheduled_events" (
         "scheduled_event_id" text PRIMARY KEY,
         "execute_at" timestamptz NOT NULL,
@@ -133,7 +126,13 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
         "status" text NOT NULL)`);
     }
 
-    const eventSchedules = await db.select("scheduled_events", { status: "CREATED" }).run(this.pool);
+    const { rows: eventSchedules } = await this.client!.query<{
+      scheduled_event_id: string;
+      execute_at: string;
+      event: any;
+      status: string;
+    }>(`SELECT * FROM scheduled_events WHERE status = 'CREATED'`);
+
     if (!eventSchedules.length) {
       return;
     }
@@ -143,7 +142,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
         if (!eventSchedule.event) {
           throw new Error(`Did not find a command for eventSchedule: ${eventSchedule.scheduled_event_id}`);
         }
-        const event = eventSchedule.event as any as ISerializedEvent<any>;
+        const event = eventSchedule.event as ISerializedEvent<any>;
         const klass = this.commandBus.registeredCommands.find(command => {
           return (command as any).name === event.meta?.className;
         });
@@ -173,12 +172,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
     );
   }
 
-  private get pool() {
-    if (!this._pool) {
-      this._pool = this.opts.client;
-    }
-    return this._pool;
-  }
+  
 }
 export class InMemoryEventScheduler implements IEventScheduler, ServiceWithLifecycleHandlers {
   private schedules: Record<string, NodeJS.Timeout> = {};

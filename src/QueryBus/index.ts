@@ -1,12 +1,11 @@
-import type { IPersistenceSettingsWithClient, IQueryBus } from "../types.js";
+import type { IPersistenceSettings, IQueryBus, Logger } from "../types.js";
 
 import type { IEventStore } from "../infrastructure/types.js";
 import { InMemoryQueryBus } from "./InMemoryQueryBus.js";
-import type { Logger } from "@figedi/svc";
 import { PersistentQueryBus } from "./PersistentQueryBus.js";
 
 export const createQuerybus = (
-  opts: IPersistenceSettingsWithClient,
+  opts: IPersistenceSettings,
   eventStore: IEventStore,
   logger: Logger,
 ): IQueryBus => {

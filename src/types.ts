@@ -1,13 +1,40 @@
-import type { Logger, ServiceWithLifecycleHandlers } from "@figedi/svc";
-import type { Pool, PoolClient } from "pg";
+import type { Client, Pool, PoolClient } from "pg";
 
 import type { Either } from "fp-ts/lib/Either.js";
 import type { ErrorObject } from "serialize-error";
-import type { IPersistedEvent } from "./infrastructure/types.js";
+import type { IPersistedEvent, IWorkerConfig, IRateLimitConfig } from "./infrastructure/types.js";
 import type { Observable } from "rxjs";
 import type { Option } from "fp-ts/lib/Option.js";
 import type { RetryBackoffConfig } from "backoff-rxjs";
 import type { UowTxSettings } from "./decorators/UowDecorator.js";
+
+type LogFn = {
+  (msg: string, ...args: unknown[]): void;
+  (obj: Record<string, unknown>, msg?: string, ...args: unknown[]): void;
+};
+
+/**
+ * Duck-typed Logger interface compatible with pino
+ */
+export interface Logger {
+  level: string;
+  fatal: LogFn;
+  error: LogFn;
+  warn: LogFn;
+  info: LogFn;
+  debug: LogFn;
+  trace: LogFn;
+  silent: LogFn;
+  child(bindings: Record<string, unknown>): Logger;
+}
+
+/**
+ * Interface for services with lifecycle hooks
+ */
+export interface ServiceWithLifecycleHandlers {
+  preflight?: () => void | Promise<void>;
+  shutdown?: () => void | Promise<void>;
+}
 
 export type ScheduledEventStatus = "CREATED" | "FAILED" | "ABORTED" | "PROCESSED";
 export interface Constructor<T> extends Function {
@@ -16,6 +43,8 @@ export interface Constructor<T> extends Function {
 export interface IMeta {
   lastCalled?: Date;
   error?: Error | ErrorObject;
+  /** Result of command execution (for executeSync retrieval) */
+  result?: unknown;
 }
 
 export enum CQRSEventType {
@@ -35,24 +64,33 @@ export interface IEventMeta {
 export interface IInmemorySettings {
   type: "inmem";
 }
-export interface IPersistentSettings {
+export interface IPostgresSettings {
   type: "pg";
-  client?: Pool;
+  pool: Pool
   runMigrations?: boolean;
   options?: Record<string, any>;
 }
-export interface IPersistentSettingsWithClient extends IPersistentSettings {
-  client: Pool;
+
+export type IPersistenceSettings = IInmemorySettings | IPostgresSettings;
+
+/** Configuration for the outbox pattern (optional, enables OutboxCommandBus/OutboxEventBus) */
+export interface IOutboxSettings {
+  /** Enable the outbox pattern (default: false for backward compatibility) */
+  enabled: boolean;
+  /** Worker configuration */
+  worker?: Partial<IWorkerConfig>;
+  /** Rate limit configuration */
+  rateLimit?: IRateLimitConfig;
 }
-export type IPersistenceSettings = IInmemorySettings | IPersistentSettings;
-export type IPersistenceSettingsWithClient = IInmemorySettings | IPersistentSettingsWithClient;
 
 export interface ICQRSSettings {
   persistence: IPersistenceSettings;
   transaction: UowTxSettings;
+  /** Outbox pattern configuration (optional) */
+  outbox?: IOutboxSettings;
 }
 
-export type ITransactionalScope = PoolClient | Pool;
+export type ITransactionalScope = Client | PoolClient
 
 export type VoidEither<TError = any> = Either<TError, Option<never>>;
 export type StringEither<TError = any> = Either<TError, string>;

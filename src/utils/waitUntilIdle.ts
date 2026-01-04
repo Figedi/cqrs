@@ -1,5 +1,5 @@
 import type { IEventStore } from "../infrastructure/types.js";
-import type { Logger } from "@figedi/svc";
+import type { Logger } from "../types.js";
 import { TimeoutExceededError } from "../errors.js";
 import { sleep } from "./sleep.js";
 

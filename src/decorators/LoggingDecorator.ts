@@ -6,10 +6,10 @@ import type {
   IDecorator,
   IQuery,
   IQueryHandler,
+  Logger,
 } from "../types.js";
 
 import { CQRSEventType } from "../types.js";
-import type { Logger } from "@figedi/svc";
 import { isLeft } from "fp-ts/lib/Either.js";
 
 export const convertTimingsToMs = ([seconds, nanoseconds]: number[]): number =>

@@ -1,7 +1,6 @@
-import type { AnyEither, ExecuteOpts, IQuery, IQueryBus } from "../types.js";
+import type { AnyEither, ExecuteOpts, IQuery, IQueryBus, Logger } from "../types.js";
 
 import { BaseQueryBus } from "./BaseQueryBus.js";
-import type { Logger } from "@figedi/svc";
 import { NoHandlerFoundError } from "../errors.js";
 import { left } from "fp-ts/lib/Either.js";
 import { v4 as uuid } from "uuid";

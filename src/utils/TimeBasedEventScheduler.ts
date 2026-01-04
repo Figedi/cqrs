@@ -1,8 +1,7 @@
-import type { Constructor, IEvent, IEventBus } from "../types.js";
+import type { Constructor, IEvent, IEventBus, Logger } from "../types.js";
 import { DayPassed, HourPassed, MinutePassed, WeekPassed } from "./internalEvents.js";
 
 import type { Job } from "node-schedule";
-import type { Logger } from "@figedi/svc";
 import { scheduleJob } from "node-schedule";
 
 export class TimeBasedEventScheduler {

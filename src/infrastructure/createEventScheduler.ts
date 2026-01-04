@@ -1,11 +1,10 @@
-import type { ICommandBus, IPersistenceSettingsWithClient } from "../types.js";
+import type { ICommandBus, IPersistenceSettings, Logger } from "../types.js";
 import { InMemoryEventScheduler, PersistentEventScheduler } from "./PersistentEventScheduler.js";
 
 import type { IEventScheduler } from "./types.js";
-import type { Logger } from "@figedi/svc";
 
 export const createEventScheduler = (
-  opts: IPersistenceSettingsWithClient,
+  opts: IPersistenceSettings,
   commandBus: ICommandBus,
   logger: Logger,
 ): IEventScheduler => {

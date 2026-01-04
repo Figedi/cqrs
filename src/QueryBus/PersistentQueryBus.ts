@@ -1,9 +1,8 @@
-import type { AnyEither, ExecuteOpts, IQuery, IQueryBus } from "../types.js";
+import type { AnyEither, ExecuteOpts, IQuery, IQueryBus, Logger } from "../types.js";
 import { isLeft, left } from "fp-ts/lib/Either.js";
 
 import { BaseQueryBus } from "./BaseQueryBus.js";
 import type { IEventStore } from "../infrastructure/types.js";
-import type { Logger } from "@figedi/svc";
 import { NoHandlerFoundError } from "../errors.js";
 import { serializeError } from "serialize-error";
 import { serializeEvent } from "../common.js";
@@ -52,7 +51,7 @@ export class PersistentQueryBus extends BaseQueryBus implements IQueryBus {
         type: "QUERY",
       });
       return result.payload;
-    } catch (e) {
+    } catch (e: any) {
       await this.eventStore.updateByEventId(eventId, {
         status: "FAILED",
         meta: {

@@ -1,15 +1,14 @@
-import type { EventTypes, IEventScheduler, IEventStore, IPersistedEvent } from "./infrastructure/types.js";
+import type { EventTypes, IEventScheduler, IEventStore, IPersistedEvent, IWorkerConfig, IRateLimitConfig } from "./infrastructure/types.js";
 import type {
   ICQRSSettings,
   ICommandBus,
   IEventBus,
-  IPersistenceSettingsWithClient,
-  IPersistentSettings,
+  IPostgresSettings,
   IQueryBus,
+  Logger,
 } from "./types.js";
 
 import { ApplicationError } from "./errors.js";
-import type { Logger } from "@figedi/svc";
 import { LoggingDecorator } from "./decorators/LoggingDecorator.js";
 import { TimeBasedEventScheduler } from "./utils/TimeBasedEventScheduler.js";
 import { UowDecorator } from "./decorators/UowDecorator.js";
@@ -21,6 +20,12 @@ import { createQuerybus } from "./QueryBus/index.js";
 import { createWaitUntilIdle } from "./utils/waitUntilIdle.js";
 import { createWaitUntilSettled } from "./utils/waitUntilSettled.js";
 import pg from "pg";
+
+/** Outbox options for command and event buses */
+interface IOutboxOpts {
+  workerConfig?: Partial<IWorkerConfig>;
+  rateLimitConfig?: IRateLimitConfig;
+}
 
 export class CQRSModule {
   public timeBasedEventScheduler!: TimeBasedEventScheduler;
@@ -55,19 +60,26 @@ export class CQRSModule {
       commandBus: this.commandBus,
     });
     this.pool =
-      (this.settings.persistence as IPersistentSettings).client ??
       new pg.Pool({
         connectionString: process.env.DATABASE_URL,
-        ...(this.settings.persistence as IPersistentSettings).options,
+        ...(this.settings.persistence as IPostgresSettings).options,
       });
 
-    const opts = { ...this.settings.persistence, client: this.pool } as IPersistenceSettingsWithClient;
+    const opts = { ...this.settings.persistence, client: this.pool };
+
+    // Prepare outbox options if enabled
+    const outboxOpts: IOutboxOpts | undefined = this.settings.outbox?.enabled
+      ? {
+          workerConfig: this.settings.outbox.worker,
+          rateLimitConfig: this.settings.outbox.rateLimit,
+        }
+      : undefined;
 
     this.eventStore = createEventStore(opts);
     this.waitUntilIdle = createWaitUntilIdle(this.eventStore);
     this.waitUntilSettled = createWaitUntilSettled(this.eventStore);
-    this.commandBus = createCommandBus(opts, this.eventStore, this.logger);
-    this.eventBus = createEventBus(opts, this.eventStore, ctxProvider, this.logger);
+    this.commandBus = createCommandBus(opts, this.eventStore, this.logger, outboxOpts);
+    this.eventBus = createEventBus(opts, this.eventStore, ctxProvider, this.logger, outboxOpts);
     this.queryBus = createQuerybus(opts, this.eventStore, this.logger);
     this.commandBus.registerDecorator(new LoggingDecorator(this.logger));
     this.commandBus.registerDecorator(new UowDecorator(this.settings.transaction, ctxProvider));
@@ -99,6 +111,36 @@ export class CQRSModule {
     }
     if ("preflight" in this.timeBasedEventScheduler) {
       await (this.timeBasedEventScheduler as any).preflight();
+    }
+  }
+
+  /**
+   * Start the CQRS module workers.
+   * For outbox-enabled buses, this starts the polling workers.
+   * Must be called after preflight() and after registering all handlers.
+   */
+  public async startup(): Promise<void> {
+    if ("startup" in this.commandBus) {
+      await (this.commandBus as any).startup();
+    }
+    if ("startup" in this.eventBus) {
+      await (this.eventBus as any).startup();
+    }
+  }
+
+  /**
+   * Shutdown the CQRS module workers gracefully.
+   * For outbox-enabled buses, this stops the polling workers and waits for in-flight operations.
+   */
+  public async shutdown(): Promise<void> {
+    if ("shutdown" in this.commandBus) {
+      await (this.commandBus as any).shutdown();
+    }
+    if ("shutdown" in this.eventBus) {
+      await (this.eventBus as any).shutdown();
+    }
+    if ("shutdown" in this.timeBasedEventScheduler) {
+      await (this.timeBasedEventScheduler as any).shutdown();
     }
   }
 }
