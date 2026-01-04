@@ -1,145 +1,67 @@
+import type { Transaction } from 'kysely';
 import type { EventTypes, IEventStore, IPersistedEvent } from "./types.js";
-import { camelCase, isNil, omitBy, snakeCase } from "lodash-es";
-
-import type { IPostgresSettings, ITransactionalScope } from "../types.js";
-import { PoolClient } from "pg";
+import type { IPostgresSettings } from "../types.js";
+import type { Database, KyselyDb } from "./db/index.js";
+import { runEventsMigration } from "./db/index.js";
 
 export class PersistentEventStore implements IEventStore {
   constructor(private opts: IPostgresSettings) {}
 
-  public async preflight() {
+  private get db(): KyselyDb {
+    return this.opts.db;
+  }
+
+  public async preflight(): Promise<void> {
     if (!this.opts.runMigrations) {
       return;
     }
-    const client = await this.opts.pool.connect()
-    try {
-  // Create base table
-      await client.query(`CREATE TABLE IF NOT EXISTS "events" (
-        event_id TEXT PRIMARY KEY,
-        event_name TEXT NOT NULL,
-        stream_id TEXT NOT NULL,
-        event JSONB NOT NULL,
-        timestamp TIMESTAMPTZ NOT NULL,
-        status TEXT NOT NULL,
-        type TEXT NOT NULL,
-        meta JSONB
-      )`);
-
-      // Add columns for distributed processing (idempotent)
-      await client.query(`
-        ALTER TABLE events ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0;
-        ALTER TABLE events ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ;
-        ALTER TABLE events ADD COLUMN IF NOT EXISTS locked_by TEXT;
-        ALTER TABLE events ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ DEFAULT NOW();
-      `);
-
-      // Create polling index (drop and recreate to ensure correct definition)
-      await client.query(`
-        DROP INDEX IF EXISTS idx_events_pending_poll;
-        CREATE INDEX idx_events_pending_poll
-        ON events (status, type, next_retry_at, timestamp)
-        WHERE status IN ('CREATED', 'FAILED');
-      `);
-
-      // Create stale lock cleanup index
-      await client.query(`
-        DROP INDEX IF EXISTS idx_events_stale_locks;
-        CREATE INDEX idx_events_stale_locks
-        ON events (locked_at)
-        WHERE locked_at IS NOT NULL AND status = 'PROCESSING';
-      `);
-
-      // Create LISTEN/NOTIFY function for executeSync
-      await client.query(`
-        CREATE OR REPLACE FUNCTION notify_event_status_change()
-        RETURNS TRIGGER AS $$
-        BEGIN
-          IF NEW.status IN ('PROCESSED', 'FAILED', 'ABORTED') THEN
-            PERFORM pg_notify(
-              'cqrs_event_status',
-              json_build_object(
-                'event_id', NEW.event_id,
-                'status', NEW.status
-              )::text
-            );
-          END IF;
-          RETURN NEW;
-        END;
-        $$ LANGUAGE plpgsql;
-
-        DROP TRIGGER IF EXISTS event_status_notify ON events;
-        CREATE TRIGGER event_status_notify
-        AFTER UPDATE OF status ON events
-        FOR EACH ROW
-        EXECUTE FUNCTION notify_event_status_change();
-      `);
-    } finally {
-client.release()
-    }
-    
+    await runEventsMigration(this.db);
   }
 
   public async insert(
     event: IPersistedEvent,
-    { allowUpsert = false, scope }: { allowUpsert?: boolean; scope?: ITransactionalScope } = {},
+    { allowUpsert = false, scope }: { allowUpsert?: boolean; scope?: Transaction<Database> } = {},
   ): Promise<void> {
-    const client = scope ?? (await this.opts.pool.connect());
+    const db = scope ?? this.db;
 
-    const columns: string[] = [];
-    const values: unknown[] = [];
-    const placeholders: string[] = [];
+    const data = {
+      eventId: event.eventId,
+      eventName: event.eventName,
+      streamId: event.streamId,
+      event: JSON.stringify(event.event),
+      timestamp: event.timestamp,
+      status: event.status,
+      type: event.type,
+      meta: event.meta ? JSON.stringify(event.meta) : null,
+      retryCount: event.retryCount ?? 0,
+      lockedAt: event.lockedAt ?? null,
+      lockedBy: event.lockedBy ?? null,
+      nextRetryAt: event.nextRetryAt ?? event.timestamp,
+    };
 
-    const data = omitBy(
-      {
-        event_id: event.eventId,
-        event_name: event.eventName,
-        stream_id: event.streamId,
-        event: event.event ? JSON.stringify(event.event) : undefined,
-        timestamp: event.timestamp,
-        status: event.status,
-        type: event.type,
-        meta: event.meta ? JSON.stringify(event.meta) : undefined,
-        retry_count: event.retryCount ?? 0,
-        locked_at: event.lockedAt,
-        locked_by: event.lockedBy,
-        next_retry_at: event.nextRetryAt ?? event.timestamp,
-      },
-      isNil,
-    );
-
-    let idx = 1;
-    for (const [key, value] of Object.entries(data)) {
-      columns.push(key);
-      values.push(value);
-      placeholders.push(`$${idx++}`);
-    }
-
-    try {
- if (allowUpsert) {
-      // Build update clause for upsert (exclude event_id from updates)
-      const updateClauses = columns
-        .filter((col) => col !== "event_id")
-        .map((col) => `${col} = EXCLUDED.${col}`)
-        .join(", ");
-
-      await client!.query(
-        `INSERT INTO events (${columns.join(", ")}) VALUES (${placeholders.join(", ")})
-         ON CONFLICT (event_id) DO UPDATE SET ${updateClauses}`,
-        values,
-      );
+    if (allowUpsert) {
+      await db
+        .insertInto('events')
+        .values(data)
+        .onConflict((oc) =>
+          oc.column('eventId').doUpdateSet({
+            eventName: (eb) => eb.ref('excluded.eventName'),
+            streamId: (eb) => eb.ref('excluded.streamId'),
+            event: (eb) => eb.ref('excluded.event'),
+            timestamp: (eb) => eb.ref('excluded.timestamp'),
+            status: (eb) => eb.ref('excluded.status'),
+            type: (eb) => eb.ref('excluded.type'),
+            meta: (eb) => eb.ref('excluded.meta'),
+            retryCount: (eb) => eb.ref('excluded.retryCount'),
+            lockedAt: (eb) => eb.ref('excluded.lockedAt'),
+            lockedBy: (eb) => eb.ref('excluded.lockedBy'),
+            nextRetryAt: (eb) => eb.ref('excluded.nextRetryAt'),
+          })
+        )
+        .execute();
     } else {
-      await client!.query(
-        `INSERT INTO events (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`,
-        values,
-      );
+      await db.insertInto('events').values(data).execute();
     }
-    } finally {
-      if (!scope) {
-        (client as PoolClient).release()
-      }
-    }
-
-   
   }
 
   public async find(query: Partial<IPersistedEvent>): Promise<IPersistedEvent[]> {
@@ -147,74 +69,48 @@ client.release()
       return [];
     }
 
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
+    let qb = this.db.selectFrom('events').selectAll();
 
-    const searchQuery = omitBy(
-      {
-        event_id: query.eventId,
-        event_name: query.eventName,
-        stream_id: query.streamId,
-        timestamp: query.timestamp,
-        status: query.status,
-        type: query.type,
-      },
-      isNil,
-    );
+    if (query.eventId) qb = qb.where('eventId', '=', query.eventId);
+    if (query.eventName) qb = qb.where('eventName', '=', query.eventName);
+    if (query.streamId) qb = qb.where('streamId', '=', query.streamId);
+    if (query.status) qb = qb.where('status', '=', query.status);
+    if (query.type) qb = qb.where('type', '=', query.type);
 
-    for (const [key, value] of Object.entries(searchQuery)) {
-      conditions.push(`${key} = $${idx++}`);
-      values.push(value);
-    }
-
-    const { rows } = await client.query(
-      `SELECT * FROM events WHERE ${conditions.join(" AND ")}`,
-      values,
-    );
-
-    return rows.map(this.mapRowToEvent);
+    const rows = await qb.execute();
+    return rows as unknown as IPersistedEvent[];
   }
 
   public async updateByEventId(
     eventId: string,
     event: Partial<IPersistedEvent>,
-    { scope }: { scope?: ITransactionalScope } = {},
+    { scope }: { scope?: Transaction<Database> } = {},
   ): Promise<void> {
-    const client = scope ?? (await this.opts.pool.connect())
+    const db = scope ?? this.db;
 
-    const updates: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
+    const updateData: Record<string, unknown> = {};
 
-    const data = omitBy(
-      {
-        event_id: event.eventId,
-        event_name: event.eventName,
-        stream_id: event.streamId,
-        event: event.event ? JSON.stringify(event.event) : undefined,
-        timestamp: event.timestamp,
-        status: event.status,
-        type: event.type,
-        meta: event.meta ? JSON.stringify(event.meta) : undefined,
-        retry_count: event.retryCount,
-        locked_at: event.lockedAt,
-        locked_by: event.lockedBy,
-        next_retry_at: event.nextRetryAt,
-      },
-      isNil,
-    );
+    if (event.eventName !== undefined) updateData.eventName = event.eventName;
+    if (event.streamId !== undefined) updateData.streamId = event.streamId;
+    if (event.event !== undefined) updateData.event = JSON.stringify(event.event);
+    if (event.timestamp !== undefined) updateData.timestamp = event.timestamp;
+    if (event.status !== undefined) updateData.status = event.status;
+    if (event.type !== undefined) updateData.type = event.type;
+    if (event.meta !== undefined) updateData.meta = JSON.stringify(event.meta);
+    if (event.retryCount !== undefined) updateData.retryCount = event.retryCount;
+    if (event.lockedAt !== undefined) updateData.lockedAt = event.lockedAt;
+    if (event.lockedBy !== undefined) updateData.lockedBy = event.lockedBy;
+    if (event.nextRetryAt !== undefined) updateData.nextRetryAt = event.nextRetryAt;
 
-    for (const [key, value] of Object.entries(data)) {
-      updates.push(`${key} = $${idx++}`);
-      values.push(value);
+    if (Object.keys(updateData).length === 0) {
+      return;
     }
 
-    values.push(eventId);
-    await client!.query(
-      `UPDATE events SET ${updates.join(", ")} WHERE event_id = $${idx}`,
-      values,
-    );
+    await db
+      .updateTable('events')
+      .set(updateData)
+      .where('eventId', '=', eventId)
+      .execute();
   }
 
   public async findByEventIds(
@@ -222,40 +118,52 @@ client.release()
     fields?: (keyof IPersistedEvent)[],
     type?: EventTypes,
   ): Promise<IPersistedEvent[]> {
-    const mappedFields = fields?.length ? this.mapFieldsToCols(fields).join(", ") : "*";
-
-    const placeholders = eventIds.map((_, i) => `$${i + 1}`).join(", ");
-    const values: unknown[] = [...eventIds];
-
-    let sql = `SELECT ${mappedFields} FROM events WHERE event_id IN (${placeholders})`;
-    if (type) {
-      values.push(type);
-      sql += ` AND type = $${values.length}`;
+    if (!eventIds.length) {
+      return [];
     }
 
-    const { rows } = await client.query(sql, values);
-    return rows.map(this.mapRowToEvent);
+    let qb = this.db.selectFrom('events');
+
+    // Select specific fields or all
+    if (fields?.length) {
+      qb = qb.select(fields as (keyof IPersistedEvent & string)[]);
+    } else {
+      qb = qb.selectAll();
+    }
+
+    qb = qb.where('eventId', 'in', eventIds);
+
+    if (type) {
+      qb = qb.where('type', '=', type);
+    }
+
+    const rows = await qb.execute();
+    return rows as unknown as IPersistedEvent[];
   }
 
   public async findUnprocessedCommands(
     ignoredEventIds?: string[],
     fields?: (keyof IPersistedEvent)[],
   ): Promise<IPersistedEvent[]> {
-    const mappedFields = fields?.length ? this.mapFieldsToCols(fields).join(", ") : "*";
+    let qb = this.db.selectFrom('events');
 
-    if (ignoredEventIds?.length) {
-      const placeholders = ignoredEventIds.map((_, i) => `$${i + 1}`).join(", ");
-      const { rows } = await client.query(
-        `SELECT ${mappedFields} FROM events WHERE status = 'CREATED' AND type = 'COMMAND' AND event_id NOT IN (${placeholders})`,
-        ignoredEventIds,
-      );
-      return rows.map(this.mapRowToEvent);
+    // Select specific fields or all
+    if (fields?.length) {
+      qb = qb.select(fields as (keyof IPersistedEvent & string)[]);
+    } else {
+      qb = qb.selectAll();
     }
 
-    const { rows } = await client.query(
-      `SELECT ${mappedFields} FROM events WHERE status = 'CREATED' AND type = 'COMMAND'`,
-    );
-    return rows.map(this.mapRowToEvent);
+    qb = qb
+      .where('status', '=', 'CREATED')
+      .where('type', '=', 'COMMAND');
+
+    if (ignoredEventIds?.length) {
+      qb = qb.where('eventId', 'not in', ignoredEventIds);
+    }
+
+    const rows = await qb.execute();
+    return rows as unknown as IPersistedEvent[];
   }
 
   public async findByStreamIds(
@@ -263,26 +171,26 @@ client.release()
     fields?: (keyof IPersistedEvent)[],
     type?: EventTypes,
   ): Promise<IPersistedEvent[]> {
-    const mappedFields = fields?.length ? this.mapFieldsToCols(fields).join(", ") : "*";
-
-    const placeholders = streamIds.map((_, i) => `$${i + 1}`).join(", ");
-    const values: unknown[] = [...streamIds];
-
-    let sql = `SELECT ${mappedFields} FROM events WHERE stream_id IN (${placeholders})`;
-    if (type) {
-      values.push(type);
-      sql += ` AND type = $${values.length}`;
+    if (!streamIds.length) {
+      return [];
     }
 
-    const { rows } = await client.query(sql, values);
-    return rows.map(this.mapRowToEvent);
-  }
+    let qb = this.db.selectFrom('events');
 
-  private mapFieldsToCols(fields: (keyof IPersistedEvent)[]): string[] {
-    return fields.map(snakeCase);
-  }
+    // Select specific fields or all
+    if (fields?.length) {
+      qb = qb.select(fields as (keyof IPersistedEvent & string)[]);
+    } else {
+      qb = qb.selectAll();
+    }
 
-  private mapRowToEvent(row: Record<string, any>): IPersistedEvent {
-    return Object.entries(row).reduce((acc, [k, v]) => ({ ...acc, [camelCase(k)]: v }), {}) as IPersistedEvent;
+    qb = qb.where('streamId', 'in', streamIds);
+
+    if (type) {
+      qb = qb.where('type', '=', type);
+    }
+
+    const rows = await qb.execute();
+    return rows as unknown as IPersistedEvent[];
   }
 }

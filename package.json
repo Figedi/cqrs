@@ -27,6 +27,7 @@
   "dependencies": {
     "backoff-rxjs": "^7.0.0",
     "fp-ts": "^2.16.11",
+    "kysely": "^0.28.9",
     "lodash-es": "^4.17.22",
     "node-schedule": "^2.1.1",
     "pg": "^8.16.3",
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.14",
+    "kysely-pglite-dialect": "^1.2.0",
     "@types/lodash-es": "^4.17.12",
     "@types/pg": "^8.16.0",
     "@types/node-schedule": "^2.1.8",

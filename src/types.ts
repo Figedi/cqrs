@@ -1,4 +1,5 @@
-import type { Client, Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
+import type { Transaction } from "kysely";
 
 import type { Either } from "fp-ts/lib/Either.js";
 import type { ErrorObject } from "serialize-error";
@@ -7,6 +8,7 @@ import type { Observable } from "rxjs";
 import type { Option } from "fp-ts/lib/Option.js";
 import type { RetryBackoffConfig } from "backoff-rxjs";
 import type { UowTxSettings } from "./decorators/UowDecorator.js";
+import type { Database, KyselyDb } from "./infrastructure/db/index.js";
 
 type LogFn = {
   (msg: string, ...args: unknown[]): void;
@@ -66,7 +68,8 @@ export interface IInmemorySettings {
 }
 export interface IPostgresSettings {
   type: "pg";
-  pool: Pool
+  db: KyselyDb;
+  pool: Pool;  // Keep for LISTEN/NOTIFY (Kysely doesn't support it)
   runMigrations?: boolean;
   options?: Record<string, any>;
 }
@@ -90,7 +93,7 @@ export interface ICQRSSettings {
   outbox?: IOutboxSettings;
 }
 
-export type ITransactionalScope = Client | PoolClient
+export type ITransactionalScope = Transaction<Database> | KyselyDb
 
 export type VoidEither<TError = any> = Either<TError, Option<never>>;
 export type StringEither<TError = any> = Either<TError, string>;

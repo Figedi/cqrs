@@ -1,400 +1,296 @@
-// import { PGlite } from "@electric-sql/pglite";
-// import type { QueryResult, QueryResultRow } from "pg";
-// import type { DbNotification } from "../infrastructure/db/adapter.js";
-// import { IsolationLevel } from "../infrastructure/db/adapter.js";
+import { PGlite } from "@electric-sql/pglite";
+import { Kysely, CamelCasePlugin } from "kysely";
+import { PGliteDialect } from "kysely-pglite-dialect";
+import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
+import type { Database, KyselyDb } from "../infrastructure/db/index.js";
 
-// /**
-//  * Check if a SQL string contains multiple statements.
-//  */
-// function hasMultipleStatements(sql: string): boolean {
-//   const cleaned = sql
-//     .replace(/'[^']*'/g, "''")
-//     .replace(/--[^\n]*/g, "")
-//     .replace(/\/\*[\s\S]*?\*\//g, "");
+/**
+ * Simple adapter interface for backward compatibility with tests that use raw SQL.
+ */
+export interface IDbAdapter {
+  query<R extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values?: unknown[]
+  ): Promise<QueryResult<R>>;
+  connect(): Promise<IDbClient>;
+}
 
-//   const statements = cleaned
-//     .split(";")
-//     .map((s) => s.trim())
-//     .filter((s) => s.length > 0);
+export interface IDbClient {
+  query<R extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values?: unknown[]
+  ): Promise<QueryResult<R>>;
+  release(): void;
+}
 
-//   return statements.length > 1;
-// }
+/**
+ * Convert PGlite result to pg.QueryResult format.
+ */
+function toPgResult<R extends QueryResultRow>(result: {
+  rows: R[];
+  affectedRows?: number;
+  fields?: Array<{ name: string; dataTypeID?: number | string }>;
+}): QueryResult<R> {
+  return {
+    rows: result.rows,
+    rowCount: result.affectedRows ?? result.rows.length,
+    command: "",
+    oid: 0,
+    fields: (result.fields || []).map((f) => ({
+      name: f.name,
+      tableID: 0,
+      columnID: 0,
+      dataTypeID: parseInt(f.dataTypeID?.toString() || "0", 10),
+      dataTypeSize: 0,
+      dataTypeModifier: 0,
+      format: "text" as const,
+    })),
+  };
+}
 
-// /**
-//  * Convert PGlite result to pg.QueryResult format.
-//  */
-// function toPgResult<R extends QueryResultRow>(result: {
-//   rows: R[];
-//   affectedRows?: number;
-//   fields?: Array<{ name: string; dataTypeID?: number | string }>;
-// }): QueryResult<R> {
-//   return {
-//     rows: result.rows,
-//     rowCount: result.affectedRows ?? result.rows.length,
-//     command: "",
-//     oid: 0,
-//     fields: (result.fields || []).map((f) => ({
-//       name: f.name,
-//       tableID: 0,
-//       columnID: 0,
-//       dataTypeID: parseInt(f.dataTypeID?.toString() || "0", 10),
-//       dataTypeSize: 0,
-//       dataTypeModifier: 0,
-//       format: "text" as const,
-//     })),
-//   };
-// }
+/**
+ * Check if a SQL string contains multiple statements.
+ */
+function hasMultipleStatements(sql: string): boolean {
+  const cleaned = sql
+    .replace(/'[^']*'/g, "''")
+    .replace(/--[^\n]*/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
 
-// /**
-//  * PGlite-based implementation of IDbClient.
-//  */
-// export class PGliteClient implements IDbClient {
-//   private notificationListeners: Array<(msg: DbNotification) => void> = [];
-//   private activeListens: Map<string, () => Promise<void>> = new Map();
+  const statements = cleaned
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 
-//   constructor(private db: PGlite) {}
+  return statements.length > 1;
+}
 
-//   async query<R extends QueryResultRow = QueryResultRow>(
-//     text: string,
-//     values?: unknown[]
-//   ): Promise<QueryResult<R>> {
-//     const trimmedText = text.trim().toUpperCase();
+/**
+ * PGlite-based adapter that provides both Kysely and raw query interfaces for testing.
+ */
+export class PGliteTestAdapter {
+  private pglite: PGlite | null = null;
+  private kyselyDb: KyselyDb | null = null;
+  private initPromise: Promise<void> | null = null;
+  private notificationListeners: Map<string, Set<(payload: string) => void>> = new Map();
+  private activeListens: Map<string, () => Promise<void>> = new Map();
 
-//     // Handle LISTEN command
-//     const listenMatch = trimmedText.match(/^LISTEN\s+(\w+)/i);
-//     if (listenMatch) {
-//       const channel = listenMatch[1].toLowerCase();
-//       await this.setupListen(channel);
-//       return toPgResult({ rows: [] as R[], affectedRows: 0 });
-//     }
+  constructor() {
+    this.initPromise = this.init();
+  }
 
-//     // Handle UNLISTEN command
-//     const unlistenMatch = trimmedText.match(/^UNLISTEN\s+(\w+)/i);
-//     if (unlistenMatch) {
-//       const channel = unlistenMatch[1].toLowerCase();
-//       await this.teardownListen(channel);
-//       return toPgResult({ rows: [] as R[], affectedRows: 0 });
-//     }
+  private async init(): Promise<void> {
+    this.pglite = await PGlite.create();
 
-//     // If no parameters and multiple statements, use exec()
-//     if ((!values || values.length === 0) && hasMultipleStatements(text)) {
-//       const results = await this.db.exec(text);
-//       const lastResult = results[results.length - 1] || { rows: [], affectedRows: 0 };
-//       return toPgResult(lastResult as { rows: R[]; affectedRows?: number });
-//     }
+    // Create Kysely instance with PGlite dialect and CamelCasePlugin
+    this.kyselyDb = new Kysely<Database>({
+      dialect: new PGliteDialect(this.pglite),
+      plugins: [new CamelCasePlugin()],
+    });
+  }
 
-//     const result = await this.db.query<R>(text, values as any[]);
-//     return toPgResult(result);
-//   }
+  private async ensureReady(): Promise<{ pglite: PGlite; db: KyselyDb }> {
+    await this.initPromise;
+    if (!this.pglite || !this.kyselyDb) {
+      throw new Error("PGlite database not initialized");
+    }
+    return { pglite: this.pglite, db: this.kyselyDb };
+  }
 
-//   private async setupListen(channel: string): Promise<void> {
-//     if (this.activeListens.has(channel)) {
-//       return;
-//     }
+  /**
+   * Get the Kysely database instance.
+   */
+  async getDb(): Promise<KyselyDb> {
+    const { db } = await this.ensureReady();
+    return db;
+  }
 
-//     const unsub = await this.db.listen(channel, (payload) => {
-//       const notification: DbNotification = {
-//         channel,
-//         payload,
-//         processId: 0,
-//       };
-//       this.notificationListeners.forEach((listener) => listener(notification));
-//     });
+  /**
+   * Get a mock Pool that wraps PGlite for LISTEN/NOTIFY compatibility.
+   * Note: This is a simplified mock that supports LISTEN/NOTIFY through PGlite.
+   */
+  async getPool(): Promise<Pool> {
+    const { pglite } = await this.ensureReady();
 
-//     this.activeListens.set(channel, unsub);
-//   }
+    // Create a mock pool that wraps PGlite
+    const mockPool = {
+      connect: async (): Promise<PoolClient> => {
+        return this.createMockPoolClient(pglite);
+      },
+      query: async <R extends QueryResultRow = QueryResultRow>(
+        text: string,
+        values?: unknown[]
+      ): Promise<QueryResult<R>> => {
+        return this.executeQuery<R>(pglite, text, values);
+      },
+      end: async (): Promise<void> => {
+        // Cleanup handled by close()
+      },
+      on: () => mockPool,
+      off: () => mockPool,
+    } as unknown as Pool;
 
-//   private async teardownListen(channel: string): Promise<void> {
-//     const unsub = this.activeListens.get(channel);
-//     if (unsub) {
-//       await unsub();
-//       this.activeListens.delete(channel);
-//     }
-//   }
+    return mockPool;
+  }
 
-//   on(event: "notification", callback: (msg: DbNotification) => void): this {
-//     if (event === "notification") {
-//       this.notificationListeners.push(callback);
-//     }
-//     return this;
-//   }
+  /**
+   * Create a mock PoolClient for LISTEN/NOTIFY support.
+   */
+  private createMockPoolClient(pglite: PGlite): PoolClient {
+    const notificationCallbacks: Array<(msg: { channel: string; payload?: string }) => void> = [];
 
-//   off(event: "notification", callback: (msg: DbNotification) => void): this {
-//     if (event === "notification") {
-//       const idx = this.notificationListeners.indexOf(callback);
-//       if (idx >= 0) {
-//         this.notificationListeners.splice(idx, 1);
-//       }
-//     }
-//     return this;
-//   }
+    const client = {
+      query: async <R extends QueryResultRow = QueryResultRow>(
+        text: string,
+        values?: unknown[]
+      ): Promise<QueryResult<R>> => {
+        const trimmedText = text.trim().toUpperCase();
 
-//   release(): void {
-//     this.activeListens.forEach(async (unsub) => {
-//       try {
-//         await unsub();
-//       } catch {
-//         // Ignore errors during cleanup
-//       }
-//     });
-//     this.activeListens.clear();
-//     this.notificationListeners = [];
-//   }
-// }
+        // Handle LISTEN command
+        const listenMatch = text.match(/^LISTEN\s+(\w+)/i);
+        if (listenMatch) {
+          const channel = listenMatch[1].toLowerCase();
+          await this.setupListen(pglite, channel, (payload) => {
+            notificationCallbacks.forEach(cb => cb({ channel, payload }));
+          });
+          return toPgResult({ rows: [] as R[], affectedRows: 0 });
+        }
 
-// /**
-//  * Simple mutex for serializing database operations.
-//  */
-// class Mutex {
-//   private queue: Array<() => void> = [];
-//   private locked = false;
+        // Handle UNLISTEN command
+        const unlistenMatch = text.match(/^UNLISTEN\s+(\w+)/i);
+        if (unlistenMatch) {
+          const channel = unlistenMatch[1].toLowerCase();
+          await this.teardownListen(channel);
+          return toPgResult({ rows: [] as R[], affectedRows: 0 });
+        }
 
-//   async acquire(): Promise<void> {
-//     return new Promise((resolve) => {
-//       if (!this.locked) {
-//         this.locked = true;
-//         resolve();
-//       } else {
-//         this.queue.push(resolve);
-//       }
-//     });
-//   }
+        return this.executeQuery<R>(pglite, text, values);
+      },
+      release: (): void => {
+        // Cleanup listeners
+        this.activeListens.forEach(async (unsub) => {
+          try {
+            await unsub();
+          } catch {
+            // Ignore errors during cleanup
+          }
+        });
+        this.activeListens.clear();
+      },
+      on: (event: string, callback: (msg: any) => void): PoolClient => {
+        if (event === "notification") {
+          notificationCallbacks.push(callback);
+        }
+        return client as PoolClient;
+      },
+      off: (): PoolClient => client as PoolClient,
+    } as unknown as PoolClient;
 
-//   release(): void {
-//     if (this.queue.length > 0) {
-//       const next = this.queue.shift()!;
-//       next();
-//     } else {
-//       this.locked = false;
-//     }
-//   }
-// }
+    return client;
+  }
 
-// /**
-//  * PGlite-based implementation of IDbAdapter.
-//  *
-//  * Note: PGlite is single-threaded, so we use a mutex to serialize
-//  * transaction access and prevent concurrent transaction conflicts.
-//  */
-// export class PGliteAdapter implements IDbAdapter {
-//   private db: PGlite | null = null;
-//   private initPromise: Promise<void> | null = null;
-//   private txMutex = new Mutex();
-//   private inTransaction = false;
+  private async setupListen(
+    pglite: PGlite,
+    channel: string,
+    callback: (payload: string) => void
+  ): Promise<void> {
+    if (this.activeListens.has(channel)) {
+      // Add to existing listeners
+      const listeners = this.notificationListeners.get(channel) || new Set();
+      listeners.add(callback);
+      this.notificationListeners.set(channel, listeners);
+      return;
+    }
 
-//   constructor() {
-//     this.initPromise = this.init();
-//   }
+    const listeners = new Set<(payload: string) => void>();
+    listeners.add(callback);
+    this.notificationListeners.set(channel, listeners);
 
-//   private async init(): Promise<void> {
-//     this.db = await PGlite.create();
-//   }
+    const unsub = await pglite.listen(channel, (payload) => {
+      const channelListeners = this.notificationListeners.get(channel);
+      if (channelListeners) {
+        channelListeners.forEach(listener => listener(payload ?? ""));
+      }
+    });
 
-//   private async ensureReady(): Promise<PGlite> {
-//     await this.initPromise;
-//     if (!this.db) {
-//       throw new Error("PGlite database not initialized");
-//     }
-//     return this.db;
-//   }
+    this.activeListens.set(channel, unsub);
+  }
 
-//   async query<R extends QueryResultRow = QueryResultRow>(
-//     text: string,
-//     values?: unknown[]
-//   ): Promise<QueryResult<R>> {
-//     const db = await this.ensureReady();
+  private async teardownListen(channel: string): Promise<void> {
+    const unsub = this.activeListens.get(channel);
+    if (unsub) {
+      await unsub();
+      this.activeListens.delete(channel);
+      this.notificationListeners.delete(channel);
+    }
+  }
 
-//     // If no parameters and multiple statements, use exec()
-//     if ((!values || values.length === 0) && hasMultipleStatements(text)) {
-//       const results = await db.exec(text);
-//       const lastResult = results[results.length - 1] || { rows: [], affectedRows: 0 };
-//       return toPgResult(lastResult as { rows: R[]; affectedRows?: number });
-//     }
+  private async executeQuery<R extends QueryResultRow>(
+    pglite: PGlite,
+    text: string,
+    values?: unknown[]
+  ): Promise<QueryResult<R>> {
+    // If no parameters and multiple statements, use exec()
+    if ((!values || values.length === 0) && hasMultipleStatements(text)) {
+      const results = await pglite.exec(text);
+      const lastResult = results[results.length - 1] || { rows: [], affectedRows: 0 };
+      return toPgResult(lastResult as unknown as { rows: R[]; affectedRows?: number });
+    }
 
-//     const result = await db.query<R>(text, values as any[]);
-//     return toPgResult(result);
-//   }
+    const result = await pglite.query<R>(text, values as any[]);
+    return toPgResult(result);
+  }
 
-//   async connect(): Promise<IDbClient> {
-//     const db = await this.ensureReady();
-//     // Return a client that serializes BEGIN/COMMIT access via the mutex
-//     return new PGliteMutexClient(db, this.txMutex, () => this.inTransaction, (val) => { this.inTransaction = val; });
-//   }
+  /**
+   * Execute a raw SQL query (for test backward compatibility).
+   */
+  async query<R extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values?: unknown[]
+  ): Promise<QueryResult<R>> {
+    const { pglite } = await this.ensureReady();
+    return this.executeQuery<R>(pglite, text, values);
+  }
 
-//   async transaction<T>(
-//     isolationLevel: IsolationLevel,
-//     callback: (client: ITransactionClient) => Promise<T>
-//   ): Promise<T> {
-//     const db = await this.ensureReady();
+  /**
+   * Get a client connection (for test backward compatibility).
+   */
+  async connect(): Promise<IDbClient> {
+    const { pglite } = await this.ensureReady();
+    return {
+      query: async <R extends QueryResultRow = QueryResultRow>(
+        text: string,
+        values?: unknown[]
+      ): Promise<QueryResult<R>> => {
+        return this.executeQuery<R>(pglite, text, values);
+      },
+      release: () => {
+        // No-op for single-connection PGlite
+      },
+    };
+  }
 
-//     // Acquire mutex to ensure no concurrent transactions
-//     await this.txMutex.acquire();
-//     this.inTransaction = true;
+  /**
+   * Close the PGlite instance.
+   */
+  async close(): Promise<void> {
+    if (this.kyselyDb) {
+      await this.kyselyDb.destroy();
+      this.kyselyDb = null;
+    }
+    if (this.pglite) {
+      await this.pglite.close();
+      this.pglite = null;
+    }
+    this.activeListens.clear();
+    this.notificationListeners.clear();
+  }
+}
 
-//     const pgliteClient = new PGliteClient(db) as ITransactionClient;
-//     (pgliteClient as any)._inTransaction = true;
-
-//     try {
-//       await db.query(`BEGIN ISOLATION LEVEL ${isolationLevel}`);
-//       const result = await callback(pgliteClient);
-//       await db.query("COMMIT");
-//       return result;
-//     } catch (error) {
-//       await db.query("ROLLBACK");
-//       throw error;
-//     } finally {
-//       this.inTransaction = false;
-//       this.txMutex.release();
-//     }
-//   }
-
-//   async end(): Promise<void> {
-//     if (this.db) {
-//       await this.db.close();
-//       this.db = null;
-//     }
-//   }
-// }
-
-// /**
-//  * PGlite client that serializes transaction commands via mutex.
-//  */
-// class PGliteMutexClient implements IDbClient {
-//   private notificationListeners: Array<(msg: DbNotification) => void> = [];
-//   private activeListens: Map<string, () => Promise<void>> = new Map();
-//   private ownTransaction = false;
-
-//   constructor(
-//     private db: PGlite,
-//     private txMutex: Mutex,
-//     private getInTransaction: () => boolean,
-//     private setInTransaction: (val: boolean) => void,
-//   ) {}
-
-//   async query<R extends QueryResultRow = QueryResultRow>(
-//     text: string,
-//     values?: unknown[]
-//   ): Promise<QueryResult<R>> {
-//     const trimmedText = text.trim().toUpperCase();
-
-//     // Handle LISTEN command
-//     const listenMatch = trimmedText.match(/^LISTEN\s+(\w+)/i);
-//     if (listenMatch) {
-//       const channel = listenMatch[1].toLowerCase();
-//       await this.setupListen(channel);
-//       return toPgResult({ rows: [] as R[], affectedRows: 0 });
-//     }
-
-//     // Handle UNLISTEN command
-//     const unlistenMatch = trimmedText.match(/^UNLISTEN\s+(\w+)/i);
-//     if (unlistenMatch) {
-//       const channel = unlistenMatch[1].toLowerCase();
-//       await this.teardownListen(channel);
-//       return toPgResult({ rows: [] as R[], affectedRows: 0 });
-//     }
-
-//     // Handle BEGIN - acquire mutex
-//     if (trimmedText.startsWith("BEGIN")) {
-//       await this.txMutex.acquire();
-//       this.ownTransaction = true;
-//       this.setInTransaction(true);
-//       const result = await this.db.query<R>(text, values as any[]);
-//       return toPgResult(result);
-//     }
-
-//     // Handle COMMIT/ROLLBACK - release mutex
-//     if (trimmedText === "COMMIT" || trimmedText === "ROLLBACK") {
-//       try {
-//         const result = await this.db.query<R>(text, values as any[]);
-//         return toPgResult(result);
-//       } finally {
-//         if (this.ownTransaction) {
-//           this.ownTransaction = false;
-//           this.setInTransaction(false);
-//           this.txMutex.release();
-//         }
-//       }
-//     }
-
-//     // If no parameters and multiple statements, use exec()
-//     if ((!values || values.length === 0) && hasMultipleStatements(text)) {
-//       const results = await this.db.exec(text);
-//       const lastResult = results[results.length - 1] || { rows: [], affectedRows: 0 };
-//       return toPgResult(lastResult as { rows: R[]; affectedRows?: number });
-//     }
-
-//     const result = await this.db.query<R>(text, values as any[]);
-//     return toPgResult(result);
-//   }
-
-//   private async setupListen(channel: string): Promise<void> {
-//     if (this.activeListens.has(channel)) {
-//       return;
-//     }
-
-//     const unsub = await this.db.listen(channel, (payload) => {
-//       const notification: DbNotification = {
-//         channel,
-//         payload,
-//         processId: 0,
-//       };
-//       this.notificationListeners.forEach((listener) => listener(notification));
-//     });
-
-//     this.activeListens.set(channel, unsub);
-//   }
-
-//   private async teardownListen(channel: string): Promise<void> {
-//     const unsub = this.activeListens.get(channel);
-//     if (unsub) {
-//       await unsub();
-//       this.activeListens.delete(channel);
-//     }
-//   }
-
-//   on(event: "notification", callback: (msg: DbNotification) => void): this {
-//     if (event === "notification") {
-//       this.notificationListeners.push(callback);
-//     }
-//     return this;
-//   }
-
-//   off(event: "notification", callback: (msg: DbNotification) => void): this {
-//     if (event === "notification") {
-//       const idx = this.notificationListeners.indexOf(callback);
-//       if (idx >= 0) {
-//         this.notificationListeners.splice(idx, 1);
-//       }
-//     }
-//     return this;
-//   }
-
-//   release(): void {
-//     // Release mutex if we own a transaction
-//     if (this.ownTransaction) {
-//       this.ownTransaction = false;
-//       this.setInTransaction(false);
-//       this.txMutex.release();
-//     }
-
-//     this.activeListens.forEach(async (unsub) => {
-//       try {
-//         await unsub();
-//       } catch {
-//         // Ignore errors during cleanup
-//       }
-//     });
-//     this.activeListens.clear();
-//     this.notificationListeners = [];
-//   }
-// }
-
-// /**
-//  * Create a PGlite-backed adapter for testing.
-//  */
-// export function createPGliteAdapter(): IDbAdapter {
-//   return new PGliteAdapter();
-// }
-
-// // Re-export IsolationLevel for convenience
-// export { IsolationLevel };
+/**
+ * Create a PGlite-backed adapter for testing.
+ * Returns an adapter that provides both Kysely and raw query interfaces.
+ */
+export function createPGliteAdapter(): PGliteTestAdapter {
+  return new PGliteTestAdapter();
+}

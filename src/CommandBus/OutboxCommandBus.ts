@@ -4,6 +4,9 @@ import { v4 as uuid } from "uuid";
 import { serializeError } from "serialize-error";
 import { Observable } from "rxjs";
 
+import type { Pool } from "pg";
+import type { Transaction } from "kysely";
+
 import type {
   AnyEither,
   Constructor,
@@ -15,7 +18,7 @@ import type {
   ServiceWithLifecycleHandlers,
   IDecorator,
   IHandlerConfig,
-  IPersistentSettingsWithClient,
+  IPostgresSettings,
   ITransactionalScope,
   StringEither,
   VoidEither,
@@ -23,9 +26,9 @@ import type {
 import { deserializeEvent, serializeEvent } from "../common.js";
 import { ApplicationError, EventByIdNotFoundError, EventIdMissingError, NoHandlerFoundError, TimeoutExceededError } from "../errors.js";
 import type { EventStatus, IEventStore, IPersistedEvent, IRateLimitConfig, IWorkerConfig } from "../infrastructure/types.js";
+import type { Database, KyselyDb } from "../infrastructure/db/index.js";
 import { createPollingWorker, type PollingWorker } from "../infrastructure/PollingWorker.js";
 import { createStreamController, type StreamController, type IStreamEvent } from "../infrastructure/utils/StreamController.js";
-import { Client } from "pg";
 
 interface IHandlerMeta {
   handles?: Constructor<ICommand>;
@@ -63,7 +66,8 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
   constructor(
     private logger: Logger,
     private eventStore: IEventStore,
-    private opts: IPersistentSettingsWithClient,
+    private db: KyselyDb,
+    private pool: Pool,
     private workerConfig?: Partial<IWorkerConfig>,
     private rateLimitConfig?: IRateLimitConfig,
   ) {}
@@ -74,7 +78,8 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
   async startup(): Promise<void> {
     // Create polling worker
     this.pollingWorker = createPollingWorker(
-      this.opts.client,
+      this.db,
+      this.pool,
       this.logger,
       "COMMAND",
       this.workerConfig,
@@ -175,7 +180,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
 
     // Transient commands bypass persistence
     if (transient) {
-      await this.processCommandDirectly(command, opts?.scope || this.opts.client);
+      await this.processCommandDirectly(command, opts?.scope || this.db);
       return right(streamId) as TRes;
     }
 
@@ -398,7 +403,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
   /**
    * Process a command event from the polling worker.
    */
-  private async processEvent(event: IPersistedEvent, client: Client): Promise<void> {
+  private async processEvent(event: IPersistedEvent, trx: Transaction<Database>): Promise<void> {
     const registered = this.handlers.get(event.eventName);
     if (!registered) {
       throw new NoHandlerFoundError(`No handler registered for ${event.eventName}`);
@@ -407,7 +412,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
     const command = this.deserializeCommand(event);
     const ctx = {
       logger: this.logger,
-      scope: client,
+      scope: trx,
     };
 
     const result = await registered.handler.handle(command, ctx);
@@ -416,7 +421,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
     if (!isLeft(result)) {
       await this.eventStore.updateByEventId(event.eventId, {
         meta: { ...event.meta, result },
-      }, { scope: client });
+      }, { scope: trx });
     }
 
     if (isLeft(result)) {
@@ -490,9 +495,10 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
 export function createOutboxCommandBus(
   logger: Logger,
   eventStore: IEventStore,
-  opts: IPersistentSettingsWithClient,
+  db: KyselyDb,
+  pool: Pool,
   workerConfig?: Partial<IWorkerConfig>,
   rateLimitConfig?: IRateLimitConfig,
 ): OutboxCommandBus {
-  return new OutboxCommandBus(logger, eventStore, opts, workerConfig, rateLimitConfig);
+  return new OutboxCommandBus(logger, eventStore, db, pool, workerConfig, rateLimitConfig);
 }

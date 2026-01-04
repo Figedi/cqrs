@@ -19,6 +19,8 @@ import { createEventStore } from "./infrastructure/createEventStore.js";
 import { createQuerybus } from "./QueryBus/index.js";
 import { createWaitUntilIdle } from "./utils/waitUntilIdle.js";
 import { createWaitUntilSettled } from "./utils/waitUntilSettled.js";
+import { createKyselyFromPool } from "./infrastructure/db/index.js";
+import type { KyselyDb } from "./infrastructure/db/index.js";
 import pg from "pg";
 
 /** Outbox options for command and event buses */
@@ -46,6 +48,8 @@ export class CQRSModule {
 
   private pool!: pg.Pool;
 
+  private db!: KyselyDb;
+
   constructor(
     private settings: ICQRSSettings,
     private logger: Logger,
@@ -59,13 +63,27 @@ export class CQRSModule {
       eventBus: this.eventBus,
       commandBus: this.commandBus,
     });
-    this.pool =
-      new pg.Pool({
-        connectionString: process.env.DATABASE_URL,
-        ...(this.settings.persistence as IPostgresSettings).options,
-      });
 
-    const opts = { ...this.settings.persistence, client: this.pool };
+    if (this.settings.persistence.type === "pg") {
+      // Use provided db/pool or create new ones
+      const pgSettings = this.settings.persistence as IPostgresSettings;
+      if (pgSettings.db && pgSettings.pool) {
+        this.db = pgSettings.db;
+        this.pool = pgSettings.pool;
+      } else {
+        // Create pool and Kysely instance from environment
+        this.pool = new pg.Pool({
+          connectionString: process.env.DATABASE_URL,
+          ...pgSettings.options,
+        });
+        this.db = createKyselyFromPool(this.pool);
+      }
+    }
+
+    // Build opts with db and pool for pg settings
+    const opts: typeof this.settings.persistence = this.settings.persistence.type === "pg"
+      ? { ...this.settings.persistence, db: this.db, pool: this.pool }
+      : this.settings.persistence;
 
     // Prepare outbox options if enabled
     const outboxOpts: IOutboxOpts | undefined = this.settings.outbox?.enabled
@@ -82,7 +100,7 @@ export class CQRSModule {
     this.eventBus = createEventBus(opts, this.eventStore, ctxProvider, this.logger, outboxOpts);
     this.queryBus = createQuerybus(opts, this.eventStore, this.logger);
     this.commandBus.registerDecorator(new LoggingDecorator(this.logger));
-    this.commandBus.registerDecorator(new UowDecorator(this.settings.transaction, ctxProvider));
+    this.commandBus.registerDecorator(new UowDecorator(this.settings.transaction, ctxProvider, this.db));
     this.queryBus.registerDecorator(new LoggingDecorator(this.logger));
     this.timeBasedEventScheduler = new TimeBasedEventScheduler(this.eventBus, this.logger);
     this.eventScheduler = createEventScheduler(opts, this.commandBus, this.logger);

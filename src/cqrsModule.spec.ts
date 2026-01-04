@@ -22,8 +22,8 @@ import {
   serializeEvent,
 } from "./common.js";
 import { isLeft, isRight, left, right } from "fp-ts/lib/Either.js";
-import { createPGliteAdapter } from "./test/pgliteAdapter.js";
-import type { IDbAdapter, IDbClient } from "./infrastructure/db/adapter.js";
+import { createPGliteAdapter, type PGliteTestAdapter, type IDbAdapter, type IDbClient } from "./test/pgliteAdapter.js";
+import { sql } from "kysely";
 
 import { CQRSModule } from "./cqrsModule.js";
 import type { Observable } from "rxjs";
@@ -106,37 +106,27 @@ const executeAndWaitForPersistentCommand = async <T, TRes extends VoidEither>(
   command: ICommand<T, TRes>,
 ) => {
   let respId: string;
-  console.log("[EXEC DEBUG] Setting up stream subscription for", command.constructor.name);
 
   // Subscribe to stream to verify it emits when command is processed
   // Note: stream() returns the command itself, not the handler result
   const streamEvent$ = new Promise<void>((resolve, reject) =>
     commandBus.stream(command.constructor.name).subscribe({
       next: (event: any) => {
-        console.log(`[EXEC DEBUG] Stream event received: eventId=${event.meta?.eventId}, looking for ${respId}`);
         if (event.meta?.eventId === respId) {
-          console.log("[EXEC DEBUG] Found matching event!");
           resolve();
         }
       },
-      error: (err) => {
-        console.log("[EXEC DEBUG] Stream error:", err);
-        reject(err);
-      },
+      error: reject,
     }),
   );
 
-  console.log("[EXEC DEBUG] Executing command...");
   const commandResponse = await commandBus.execute(command);
   if (!isRight(commandResponse)) {
     throw new Error("Command failed");
   }
   respId = commandResponse.right;
-  console.log(`[EXEC DEBUG] Command executed, respId=${respId}`);
 
-  console.log("[EXEC DEBUG] Waiting for stream event...");
   await streamEvent$;
-  console.log("[EXEC DEBUG] Got stream event!");
 
   // Verify status is PROCESSED and fetch the result from meta
   let result: TRes | undefined;
@@ -200,10 +190,10 @@ const txSettings = {
 
 describe("cqrsModule", () => {
   const logger: any = {
-    warn: (...args: any[]) => console.log("[WARN]", ...args),
-    error: (...args: any[]) => console.log("[ERROR]", ...args),
-    debug: (...args: any[]) => console.log("[DEBUG]", ...args),
-    info: (...args: any[]) => console.log("[INFO]", ...args),
+    warn: () => {},
+    error: () => {},
+    debug: () => {},
+    info: () => {},
   };
   logger.child = () => logger;
 
@@ -249,17 +239,20 @@ describe("cqrsModule", () => {
   });
 
   describe("persistence mode = pg (PGlite)", () => {
-    let adapter: IDbAdapter;
+    let adapter: PGliteTestAdapter;
     let client: IDbClient;
 
     let cqrsModule: CQRSModule;
 
     beforeAll(async () => {
       adapter = createPGliteAdapter();
+      const db = await adapter.getDb();
+      const pool = await adapter.getPool();
       const CQRS_OPTIONS: ICQRSSettings = {
         transaction: txSettings,
         persistence: {
-          client: adapter,
+          db,
+          pool,
           type: "pg",
           runMigrations: true,
           options: {
@@ -278,9 +271,7 @@ describe("cqrsModule", () => {
     });
 
     beforeEach(async () => {
-      console.log("[BEFORE_EACH] connecting client...");
       client = await adapter.connect();
-      console.log("[BEFORE_EACH] truncating tables...");
       // Truncate tables before preflight if they exist (to clear stale data)
       // This handles the case where tables exist from a previous test run
       try {
@@ -290,12 +281,9 @@ describe("cqrsModule", () => {
         // Tables don't exist yet, that's fine - preflight will create them
       }
       // Preflight creates tables if needed
-      console.log("[BEFORE_EACH] running preflight...");
       await cqrsModule.preflight();
       // Startup initializes workers and stream controllers
-      console.log("[BEFORE_EACH] starting up...");
       await cqrsModule.startup();
-      console.log("[BEFORE_EACH] done!");
     });
 
     afterEach(async () => {
@@ -399,10 +387,7 @@ describe("cqrsModule", () => {
 
       it("resolves with inserts done concurrently on the same entity", { timeout: 30000 }, async () => {
         const cmdCb = async ({ id, type }: { id: string; type: string }, scope: ITransactionalScope) => {
-          await (scope as IDbClient).query(
-            "INSERT into test (id, content) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET content = excluded.content",
-            [+id, type],
-          );
+          await sql`INSERT into test (id, content) VALUES (${+id}, ${type}) ON CONFLICT (id) DO UPDATE SET content = excluded.content`.execute(scope);
         };
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb, ExampleCommand, false);
 
@@ -428,15 +413,11 @@ describe("cqrsModule", () => {
 
     describe("core behaviour", () => {
       it("accepts commands", async () => {
-        console.log("[TEST DEBUG] Starting accepts commands test");
         const cmdCb = vi.fn();
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb);
         cqrsModule.commandBus.register(new ExampleCommandHandler());
-        console.log("[TEST DEBUG] Handler registered");
         const cmdPayload = { id: ID, type: "command" };
-        console.log("[TEST DEBUG] About to execute command...");
         await executeAndWaitForPersistentCommand(adapter, cqrsModule.commandBus, new ExampleCommand(cmdPayload));
-        console.log("[TEST DEBUG] Command completed!");
         expect(cmdCb).toHaveBeenCalledOnce();
         expect(cmdCb).toHaveBeenCalledWith(cmdPayload, expect.anything());
         const { rows } = await adapter.query<any>(`SELECT * FROM events WHERE type = 'EVENT'`);

@@ -1,4 +1,4 @@
-import type { ClassContextProvider, IEventBus, IPersistenceSettings, Logger } from "../types.js";
+import type { ClassContextProvider, IEventBus, IPersistenceSettings, IPostgresSettings, Logger } from "../types.js";
 import type { IEventStore, IRateLimitConfig, IWorkerConfig } from "../infrastructure/types.js";
 import { InMemoryEventBus } from "./InMemoryEventBus.js";
 import { OutboxEventBus, createOutboxEventBus } from "./OutboxEventBus.js";
@@ -32,11 +32,13 @@ export const createEventBus = (
     return new InMemoryEventBus(logger, ctxProvider);
   }
 
+  const pgOpts = opts as IPostgresSettings;
   // Use OutboxEventBus for persistent storage
   return createOutboxEventBus(
     logger,
     eventStore,
-    opts.pool,
+    pgOpts.db,
+    pgOpts.pool,
     ctxProvider,
     outboxOpts?.workerConfig,
     outboxOpts?.rateLimitConfig,

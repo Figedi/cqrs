@@ -20,6 +20,7 @@ import type {
 import { deserializeEvent, serializeEvent } from "../common.js";
 import { ApplicationError } from "../errors.js";
 import type { EventStatus, IEventStore, IPersistedEvent, IRateLimitConfig, IWorkerConfig } from "../infrastructure/types.js";
+import type { KyselyDb } from "../infrastructure/db/index.js";
 import { createPollingWorker, type PollingWorker } from "../infrastructure/PollingWorker.js";
 import { createStreamController, type StreamController, type IStreamEvent } from "../infrastructure/utils/StreamController.js";
 import { SagaTriggeredCommandEvent } from "../utils/internalEvents.js";
@@ -47,6 +48,7 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
   constructor(
     private readonly logger: Logger,
     private readonly eventStore: IEventStore,
+    private readonly db: KyselyDb,
     private readonly pool: Pool,
     private readonly ctxProvider: ClassContextProvider,
     private workerConfig?: Partial<IWorkerConfig>,
@@ -59,6 +61,7 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
   async startup(): Promise<void> {
     // Create polling worker for EVENT type
     this.pollingWorker = createPollingWorker(
+      this.db,
       this.pool,
       this.logger,
       "EVENT",
@@ -322,10 +325,11 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
 export function createOutboxEventBus(
   logger: Logger,
   eventStore: IEventStore,
+  db: KyselyDb,
   pool: Pool,
   ctxProvider: ClassContextProvider,
   workerConfig?: Partial<IWorkerConfig>,
   rateLimitConfig?: IRateLimitConfig,
 ): OutboxEventBus {
-  return new OutboxEventBus(logger, eventStore, pool, ctxProvider, workerConfig, rateLimitConfig);
+  return new OutboxEventBus(logger, eventStore, db, pool, ctxProvider, workerConfig, rateLimitConfig);
 }

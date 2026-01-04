@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
-import type { ITransactionalScope, Logger } from "../types.js";
+import type { Transaction } from "kysely";
+import type { Logger } from "../types.js";
 import { v4 as uuid } from "uuid";
 
 import type {
@@ -10,6 +11,8 @@ import type {
   IWorkerConfig,
   IRateLimitConfig,
 } from "./types.js";
+import type { Database, KyselyDb } from "./db/index.js";
+import { sql } from "./db/index.js";
 import {
   calculateNextRetryAt,
   DEFAULT_RETRY_CONFIG,
@@ -33,7 +36,7 @@ export const DEFAULT_WORKER_CONFIG: IWorkerConfig = {
 /** Callback for processing a claimed event */
 export type EventProcessor = (
   event: IPersistedEvent,
-  client: PoolClient,
+  trx: Transaction<Database>,
 ) => Promise<void>;
 
 /** Callback for handling event completion (success or failure) */
@@ -54,7 +57,6 @@ export type CompletionCallback = (
  * - Stale lock cleanup
  * - LISTEN/NOTIFY support for executeSync
  */
-
 export class PollingWorker {
   private workerId: string;
   private config: IWorkerConfig;
@@ -62,17 +64,18 @@ export class PollingWorker {
   private pollingTimer?: ReturnType<typeof setInterval>;
   private staleLockTimer?: ReturnType<typeof setInterval>;
   private isRunning = false;
+  private isPolling = false;  // Guard to prevent overlapping poll cycles
   private notifyClient?: PoolClient;
   private notifyListeners = new Map<string, (status: EventStatus) => void>();
 
   constructor(
-    private pool: Pool,
+    private db: KyselyDb,
+    private pool: Pool,  // Keep for LISTEN/NOTIFY
     private logger: Logger,
     private eventType: EventTypes,
     config?: Partial<IWorkerConfig>,
     private rateLimitConfig?: IRateLimitConfig,
   ) {
-
     this.workerId = config?.workerId || `worker-${uuid()}`;
     this.config = {
       ...DEFAULT_WORKER_CONFIG,
@@ -100,9 +103,6 @@ export class PollingWorker {
 
   /**
    * Start the polling worker.
-   *
-   * @param processor - Callback to process each claimed event
-   * @param onCompletion - Optional callback when an event completes
    */
   async start(processor: EventProcessor, onCompletion?: CompletionCallback): Promise<void> {
     if (this.isRunning) {
@@ -154,6 +154,7 @@ export class PollingWorker {
       } catch {
         // Ignore errors during cleanup
       }
+      this.notifyClient.release();
       this.notifyClient = undefined;
     }
 
@@ -162,10 +163,6 @@ export class PollingWorker {
 
   /**
    * Wait for a specific event to complete (for executeSync).
-   *
-   * @param eventId - The event ID to wait for
-   * @param timeoutMs - Maximum time to wait (0 = no timeout)
-   * @returns The final status of the event
    */
   async waitForCompletion(eventId: string, timeoutMs: number = 0): Promise<EventStatus> {
     return new Promise((resolve, reject) => {
@@ -204,10 +201,6 @@ export class PollingWorker {
 
   /**
    * Wait for multiple events to complete.
-   *
-   * @param eventIds - Array of event IDs to wait for
-   * @param timeoutMs - Maximum time to wait (0 = no timeout)
-   * @returns Map of event IDs to their final statuses
    */
   async waitForCompletionBatch(
     eventIds: string[],
@@ -230,73 +223,70 @@ export class PollingWorker {
     processor: EventProcessor,
     onCompletion?: CompletionCallback,
   ): Promise<void> {
-    this.logger.debug({ workerId: this.workerId, eventType: this.eventType }, "Poll cycle starting");
+    // Prevent overlapping poll cycles (important for single-connection databases like PGlite)
+    if (this.isPolling) {
+      return;
+    }
+    this.isPolling = true;
+
     try {
       // Poll for FAILED events first (higher priority)
       const failedResult = await this.poll("FAILED");
-      this.logger.debug({ workerId: this.workerId, claimedFailed: failedResult.claimed.length }, "Polled FAILED events");
       await this.processBatch(failedResult.claimed, processor, onCompletion);
 
       // Then poll for CREATED events
       const createdResult = await this.poll("CREATED");
-      this.logger.debug({ workerId: this.workerId, claimedCreated: createdResult.claimed.length }, "Polled CREATED events");
       await this.processBatch(createdResult.claimed, processor, onCompletion);
     } catch (error) {
       this.logger.error({ error, workerId: this.workerId }, "Error during polling");
+    } finally {
+      this.isPolling = false;
     }
-    this.logger.debug({ workerId: this.workerId, eventType: this.eventType }, "Poll cycle complete");
   }
 
   /**
    * Poll for events with a specific status.
-   *
-   * @param status - The status to poll for (CREATED or FAILED)
-   * @returns Poll result with claimed events
+   * Note: In production with multiple workers, wrap this in a transaction with FOR UPDATE SKIP LOCKED.
+   * For PGlite (single connection), we use a simpler approach.
    */
   private async poll(status: "CREATED" | "FAILED"): Promise<IPollResult> {
-    const client = await this.pool.connect();
+    const selected = await this.db
+      .selectFrom('events')
+      .select('eventId')
+      .where('status', '=', status)
+      .where('type', '=', this.eventType)
+      .limit(this.config.batchSize)
+      .execute();
 
-    try {
-      await client.query("BEGIN");
-
-      // Use FOR UPDATE SKIP LOCKED to claim events without blocking
-      const result = await client.query(
-        `
-        UPDATE events
-        SET
-          status = 'PROCESSING',
-          locked_at = NOW(),
-          locked_by = $1
-        WHERE event_id IN (
-          SELECT event_id FROM events
-          WHERE status = $2
-            AND type = $3
-            AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-          ORDER BY
-            CASE WHEN status = 'FAILED' THEN 0 ELSE 1 END,
-            next_retry_at ASC,
-            timestamp ASC
-          LIMIT $4
-          FOR UPDATE SKIP LOCKED
-        )
-        RETURNING *
-        `,
-        [this.workerId, status, this.eventType, this.config.batchSize],
-      );
-
-      await client.query("COMMIT");
-
-      const claimed = result.rows.map(this.mapRowToEvent);
-      return {
-        claimed,
-        hasMore: claimed.length === this.config.batchSize,
-      };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
+    if (selected.length === 0) {
+      return { claimed: [], hasMore: false };
     }
+
+    const eventIds = selected.map((r) => r.eventId);
+
+    // Update events one by one to avoid PGlite issues with IN clause + RETURNING
+    const claimed: IPersistedEvent[] = [];
+    for (const eventId of eventIds) {
+      const result = await this.db
+        .updateTable('events')
+        .set({
+          status: 'PROCESSING',
+          lockedAt: sql`NOW()`,
+          lockedBy: this.workerId,
+        })
+        .where('eventId', '=', eventId)
+        .returningAll()
+        .executeTakeFirst();
+
+      if (result) {
+        claimed.push(result as unknown as IPersistedEvent);
+      }
+    }
+
+    return {
+      claimed: claimed as unknown as IPersistedEvent[],
+      hasMore: claimed.length === this.config.batchSize,
+    };
   }
 
   /**
@@ -320,7 +310,6 @@ export class PollingWorker {
     processor: EventProcessor,
     onCompletion?: CompletionCallback,
   ): Promise<void> {
-    this.logger.debug({ workerId: this.workerId, eventId: event.eventId }, "Processing event - starting");
     const rateLimitKey = `${this.eventType}:${event.eventName}`;
 
     // Apply rate limiting
@@ -337,34 +326,24 @@ export class PollingWorker {
       }
     }
 
-    this.logger.debug({ workerId: this.workerId, eventId: event.eventId }, "Processing event - starting transaction");
-    const client  = await this.pool.connect()
     try {
-      await client.query('BEGIN')
-      // Use adapter.transaction to avoid conflicts with UowDecorator's transaction management
-      // This wraps the entire processing in a single transaction
-        this.logger.debug({ workerId: this.workerId, eventId: event.eventId }, "Processing event - in transaction, calling processor");
-
+      await this.db.transaction().execute(async (trx) => {
         // Process the event (handler may update event meta within this transaction)
-        await processor(event, client);
-        this.logger.debug({ workerId: this.workerId, eventId: event.eventId }, "Processing event - processor done, marking processed");
+        await processor(event, trx);
 
         // Mark as processed within the same transaction
-        await this.markProcessed(event.eventId, client);
-        this.logger.debug({ workerId: this.workerId, eventId: event.eventId }, "Processing event - marked processed");
-      this.logger.debug({ workerId: this.workerId, eventId: event.eventId }, "Processing event - transaction committed");
+        await this.markProcessed(event.eventId, trx);
+      });
+
       onCompletion?.(event, "PROCESSED");
-      await client.query("COMMIT");
     } catch (error) {
-      this.logger.error({ workerId: this.workerId, eventId: event.eventId, error }, "Processing event - error");
-      await client.query("ROLLBACK");
+      this.logger.error({ eventId: event.eventId, error }, "Event processing failed");
       await this.handleProcessingError(event, error as Error, onCompletion);
-    }  finally {
+    } finally {
       // Release rate limiter slot
       if (this.rateLimiter) {
         await this.rateLimiter.release(rateLimitKey);
       }
-      client.release()
     }
   }
 
@@ -401,16 +380,17 @@ export class PollingWorker {
   /**
    * Mark an event as processed.
    */
-  private async markProcessed(eventId: string, client?: ITransactionalScope): Promise<void> {
-    const db = client || this.pool;
-    await db.query(
-      `
-      UPDATE events
-      SET status = 'PROCESSED', locked_at = NULL, locked_by = NULL
-      WHERE event_id = $1
-      `,
-      [eventId],
-    );
+  private async markProcessed(eventId: string, trx?: Transaction<Database>): Promise<void> {
+    const db = trx ?? this.db;
+    await db
+      .updateTable('events')
+      .set({
+        status: 'PROCESSED',
+        lockedAt: null,
+        lockedBy: null,
+      })
+      .where('eventId', '=', eventId)
+      .execute();
   }
 
   /**
@@ -422,87 +402,83 @@ export class PollingWorker {
     nextRetryAt: Date,
     error: Error,
   ): Promise<void> {
-    await this.pool.query(
-      `
-      UPDATE events
-      SET
-        status = 'FAILED',
-        retry_count = $2,
-        next_retry_at = $3,
-        locked_at = NULL,
-        locked_by = NULL,
-        meta = jsonb_set(COALESCE(meta, '{}'), '{error}', $4::jsonb)
-      WHERE event_id = $1
-      `,
-      [
-        eventId,
+    await this.db
+      .updateTable('events')
+      .set({
+        status: 'FAILED',
         retryCount,
         nextRetryAt,
-        JSON.stringify({ message: error.message, stack: error.stack }),
-      ],
-    );
+        lockedAt: null,
+        lockedBy: null,
+        meta: sql`jsonb_set(COALESCE(meta, '{}'), '{error}', ${JSON.stringify({
+          message: error.message,
+          stack: error.stack,
+        })}::jsonb)`,
+      })
+      .where('eventId', '=', eventId)
+      .execute();
   }
 
   /**
    * Mark an event as aborted (max retries exceeded).
    */
   private async markAborted(eventId: string, retryCount: number, error: Error): Promise<void> {
-    await this.pool.query(
-      `
-      UPDATE events
-      SET
-        status = 'ABORTED',
-        retry_count = $2,
-        locked_at = NULL,
-        locked_by = NULL,
-        meta = jsonb_set(COALESCE(meta, '{}'), '{error}', $3::jsonb)
-      WHERE event_id = $1
-      `,
-      [
-        eventId,
+    await this.db
+      .updateTable('events')
+      .set({
+        status: 'ABORTED',
         retryCount,
-        JSON.stringify({ message: error.message, stack: error.stack }),
-      ],
-    );
+        lockedAt: null,
+        lockedBy: null,
+        meta: sql`jsonb_set(COALESCE(meta, '{}'), '{error}', ${JSON.stringify({
+          message: error.message,
+          stack: error.stack,
+        })}::jsonb)`,
+      })
+      .where('eventId', '=', eventId)
+      .execute();
   }
 
   /**
    * Release a lock (e.g., when rate limited).
    */
   private async releaseLock(eventId: string): Promise<void> {
-    await this.pool.query(
-      `
-      UPDATE events
-      SET status = 'CREATED', locked_at = NULL, locked_by = NULL
-      WHERE event_id = $1 AND locked_by = $2
-      `,
-      [eventId, this.workerId],
-    );
+    await this.db
+      .updateTable('events')
+      .set({
+        status: 'CREATED',
+        lockedAt: null,
+        lockedBy: null,
+      })
+      .where('eventId', '=', eventId)
+      .where('lockedBy', '=', this.workerId)
+      .execute();
   }
 
   /**
    * Cleanup stale locks from dead workers.
    */
   private async cleanupStaleLocks(): Promise<void> {
-    const result = await this.pool.query(
-      `
-      UPDATE events
-      SET
-        status = 'FAILED',
-        locked_at = NULL,
-        locked_by = NULL,
-        retry_count = COALESCE(retry_count, 0) + 1,
-        next_retry_at = NOW()
-      WHERE locked_at IS NOT NULL
-        AND locked_at < NOW() - INTERVAL '${this.config.lockTimeoutMs} milliseconds'
-        AND status = 'PROCESSING'
-      RETURNING event_id
-      `,
-    );
+    const lockTimeoutInterval = `${this.config.lockTimeoutMs} milliseconds`;
 
-    if (result.rowCount && result.rowCount > 0) {
+    const result = await this.db
+      .updateTable('events')
+      .set({
+        status: 'FAILED',
+        lockedAt: null,
+        lockedBy: null,
+        retryCount: sql`COALESCE(retry_count, 0) + 1`,
+        nextRetryAt: sql`NOW()`,
+      })
+      .where('lockedAt', 'is not', null)
+      .where('lockedAt', '<', sql<Date>`NOW() - INTERVAL ${sql.lit(lockTimeoutInterval)}`)
+      .where('status', '=', 'PROCESSING')
+      .returning('eventId')
+      .execute();
+
+    if (result.length > 0) {
       this.logger.warn(
-        { count: result.rowCount, eventIds: result.rows.map((r) => r.event_id) },
+        { count: result.length, eventIds: result.map((r) => r.eventId) },
         "Cleaned up stale locks",
       );
     }
@@ -535,31 +511,13 @@ export class PollingWorker {
    * Check the current status of an event.
    */
   private async checkEventStatus(eventId: string): Promise<EventStatus | null> {
-    const result = await this.pool.query(
-      "SELECT status FROM events WHERE event_id = $1",
-      [eventId],
-    );
-    return result.rows[0]?.status || null;
-  }
+    const result = await this.db
+      .selectFrom('events')
+      .select('status')
+      .where('eventId', '=', eventId)
+      .executeTakeFirst();
 
-  /**
-   * Map a database row to IPersistedEvent.
-   */
-  private mapRowToEvent(row: Record<string, any>): IPersistedEvent {
-    return {
-      eventId: row.event_id,
-      eventName: row.event_name,
-      streamId: row.stream_id,
-      event: row.event,
-      timestamp: row.timestamp,
-      status: row.status,
-      type: row.type,
-      meta: row.meta,
-      retryCount: row.retry_count,
-      lockedAt: row.locked_at,
-      lockedBy: row.locked_by,
-      nextRetryAt: row.next_retry_at,
-    };
+    return result?.status ?? null;
   }
 }
 
@@ -567,11 +525,12 @@ export class PollingWorker {
  * Create a new PollingWorker instance.
  */
 export function createPollingWorker(
+  db: KyselyDb,
   pool: Pool,
   logger: Logger,
   eventType: EventTypes,
   config?: Partial<IWorkerConfig>,
   rateLimitConfig?: IRateLimitConfig,
 ): PollingWorker {
-  return new PollingWorker(pool, logger, eventType, config, rateLimitConfig);
+  return new PollingWorker(db, pool, logger, eventType, config, rateLimitConfig);
 }

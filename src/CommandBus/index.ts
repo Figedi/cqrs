@@ -1,4 +1,4 @@
-import type { ICommandBus, IPersistenceSettings, Logger } from "../types.js";
+import type { ICommandBus, IPersistenceSettings, IPostgresSettings, Logger } from "../types.js";
 
 import type { IEventStore, IRateLimitConfig, IWorkerConfig } from "../infrastructure/types.js";
 import { InMemoryCommandBus } from "./InMemoryCommandBus.js";
@@ -31,11 +31,13 @@ export const createCommandBus = (
     return new InMemoryCommandBus(logger);
   }
 
+  const pgOpts = opts as IPostgresSettings;
   // Use OutboxCommandBus for persistent storage
   return createOutboxCommandBus(
     logger,
     eventStore,
-    opts,
+    pgOpts.db,
+    pgOpts.pool,
     outboxOpts?.workerConfig,
     outboxOpts?.rateLimitConfig,
   );
