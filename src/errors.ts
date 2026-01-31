@@ -1,4 +1,5 @@
 export class ApplicationError extends Error {}
+
 export class NoHandlerFoundError extends Error {}
 export class EventByIdNotFoundError extends Error {}
 export class EventIdMissingError extends Error {}
