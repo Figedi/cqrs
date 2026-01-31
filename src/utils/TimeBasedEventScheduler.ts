@@ -1,14 +1,12 @@
-import type { Constructor, IEvent, IEventBus } from "../types.js";
-import { DayPassed, HourPassed, MinutePassed, WeekPassed } from "./internalEvents.js";
-
-import type { Job } from "node-schedule";
-import type { Logger } from "@figedi/svc";
-import { scheduleJob } from "node-schedule";
+import type { Job } from "node-schedule"
+import { scheduleJob } from "node-schedule"
+import type { Constructor, IEvent, IEventBus, Logger } from "../types.js"
+import { DayPassed, HourPassed, MinutePassed, WeekPassed } from "./internalEvents.js"
 
 export class TimeBasedEventScheduler {
-  private jobs: Job[] = [];
+  private jobs: Job[] = []
 
-  private registeredJobs: [string, Constructor<IEvent>][] = [];
+  private registeredJobs: [string, Constructor<IEvent>][] = []
 
   constructor(
     private eventBus: IEventBus,
@@ -17,12 +15,12 @@ export class TimeBasedEventScheduler {
 
   private dispatchEvent = (EventCtor: Constructor<IEvent>) => (): void => {
     this.eventBus.execute(new EventCtor({ now: new Date() }), { transient: true }).catch((e: any) => {
-      this.logger.error({ error: e }, `Unknown error while trying to dispatch time-passed event: ${e.message}`);
-    });
-  };
+      this.logger.error({ error: e }, `Unknown error while trying to dispatch time-passed event: ${e.message}`)
+    })
+  }
 
   public registerJob(cronTab: string, EventCtor: Constructor<IEvent>) {
-    this.registeredJobs.push([cronTab, EventCtor]);
+    this.registeredJobs.push([cronTab, EventCtor])
   }
 
   public preflight() {
@@ -32,10 +30,10 @@ export class TimeBasedEventScheduler {
       scheduleJob("0 * * * *", this.dispatchEvent(HourPassed)),
       scheduleJob("0 0 * * *", this.dispatchEvent(DayPassed)),
       scheduleJob("0 0 * * 1", this.dispatchEvent(WeekPassed)),
-    ];
+    ]
   }
 
   public shutdown() {
-    this.jobs.forEach(job => job.cancel(false));
+    this.jobs.forEach(job => job.cancel(false))
   }
 }

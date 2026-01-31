@@ -1,91 +1,112 @@
-import * as db from "zapatos/db";
-
-import type { EventTypes, IEventStore, IPersistedEvent } from "./types.js";
-import type { Pool, PoolClient } from "pg";
-import { camelCase, isNil, omitBy, snakeCase } from "lodash-es";
-
-import type { IPersistentSettingsWithClient } from "../types.js";
+import type { Transaction } from "kysely"
+import type { IPostgresSettings } from "../types.js"
+import type { Database, KyselyDb } from "./db/index.js"
+import { runEventsMigration } from "./db/index.js"
+import type { EventTypes, IEventStore, IPersistedEvent } from "./types.js"
 
 export class PersistentEventStore implements IEventStore {
-  private _pool?: Pool | PoolClient;
-  constructor(private opts: IPersistentSettingsWithClient) {}
+  constructor(private opts: IPostgresSettings) {}
 
-  public async preflight() {
-    if (this.opts.runMigrations) {
-      await this.pool.query(`CREATE TABLE IF NOT EXISTS "events" (
-        event_id TEXT PRIMARY KEY,
-        event_name TEXT NOT NULL,
-        stream_id TEXT NOT NULL,
-        event JSONB NOT NULL,
-        timestamp TIMESTAMPTZ NOT NULL,
-        status TEXT NOT NULL,
-        type TEXT NOT NULL,
-        meta JSONB
-      )`);
-    }
+  private get db(): KyselyDb {
+    return this.opts.db
   }
 
-  public async insert(event: IPersistedEvent, { allowUpsert = false } = {}): Promise<void> {
-    const insertable = omitBy(
-      {
-        event_id: event.eventId,
-        event_name: event.eventName,
-        stream_id: event.streamId,
-        event: event.event ? db.param(event.event as {}, true) : undefined,
-        timestamp: event.timestamp,
-        status: event.status,
-        type: event.type,
-        meta: event.meta ? db.param(event.meta as {}, true) : undefined,
-      },
-      isNil,
-    ) as any;
+  public async preflight(): Promise<void> {
+    if (!this.opts.runMigrations) {
+      return
+    }
+    await runEventsMigration(this.db)
+  }
+
+  public async insert(
+    event: IPersistedEvent,
+    { allowUpsert = false, scope }: { allowUpsert?: boolean; scope?: Transaction<Database> } = {},
+  ): Promise<void> {
+    const db = scope ?? this.db
+
+    const data = {
+      eventId: event.eventId,
+      eventName: event.eventName,
+      streamId: event.streamId,
+      event: JSON.stringify(event.event),
+      timestamp: event.timestamp,
+      status: event.status,
+      type: event.type,
+      meta: event.meta ? JSON.stringify(event.meta) : null,
+      retryCount: event.retryCount ?? 0,
+      lockedAt: event.lockedAt ?? null,
+      lockedBy: event.lockedBy ?? null,
+      nextRetryAt: event.nextRetryAt ?? event.timestamp,
+    }
+
     if (allowUpsert) {
-      await db.upsert("events", insertable, ["event_id"]).run(this.pool);
+      await db
+        .insertInto("events")
+        .values(data)
+        .onConflict(oc =>
+          oc.column("eventId").doUpdateSet({
+            eventName: eb => eb.ref("excluded.eventName"),
+            streamId: eb => eb.ref("excluded.streamId"),
+            event: eb => eb.ref("excluded.event"),
+            timestamp: eb => eb.ref("excluded.timestamp"),
+            status: eb => eb.ref("excluded.status"),
+            type: eb => eb.ref("excluded.type"),
+            meta: eb => eb.ref("excluded.meta"),
+            retryCount: eb => eb.ref("excluded.retryCount"),
+            lockedAt: eb => eb.ref("excluded.lockedAt"),
+            lockedBy: eb => eb.ref("excluded.lockedBy"),
+            nextRetryAt: eb => eb.ref("excluded.nextRetryAt"),
+          }),
+        )
+        .execute()
     } else {
-      await db.insert("events", insertable).run(this.pool);
+      await db.insertInto("events").values(data).execute()
     }
   }
 
   public async find(query: Partial<IPersistedEvent>): Promise<IPersistedEvent[]> {
     if (!Object.keys(query).length) {
-      return [];
+      return []
     }
-    const searchQuery = omitBy(
-      {
-        event_id: query.eventId,
-        event_name: query.eventName,
-        stream_id: query.streamId,
-        timestamp: query.timestamp,
-        status: query.status,
-        type: query.type,
-      },
-      isNil,
-    );
-    const rows = await db.select("events", searchQuery).run(this.pool);
 
-    return rows.map(this.mapRowToEvent);
+    let qb = this.db.selectFrom("events").selectAll()
+
+    if (query.eventId) qb = qb.where("eventId", "=", query.eventId)
+    if (query.eventName) qb = qb.where("eventName", "=", query.eventName)
+    if (query.streamId) qb = qb.where("streamId", "=", query.streamId)
+    if (query.status) qb = qb.where("status", "=", query.status)
+    if (query.type) qb = qb.where("type", "=", query.type)
+
+    const rows = await qb.execute()
+    return rows as unknown as IPersistedEvent[]
   }
 
-  public async updateByEventId(eventId: string, event: Partial<IPersistedEvent>): Promise<void> {
-    await db
-      .update(
-        "events",
-        omitBy(
-          {
-            event_id: event.eventId,
-            event_name: event.eventName,
-            stream_id: event.streamId,
-            event: event.event ? db.param(event.event, true) : undefined,
-            timestamp: event.timestamp,
-            status: event.status,
-            type: event.type,
-            meta: event.meta ? db.param(event.meta, true) : undefined,
-          },
-          isNil,
-        ),
-        { event_id: eventId },
-      )
-      .run(this.pool);
+  public async updateByEventId(
+    eventId: string,
+    event: Partial<IPersistedEvent>,
+    { scope }: { scope?: Transaction<Database> } = {},
+  ): Promise<void> {
+    const db = scope ?? this.db
+
+    const updateData: Record<string, unknown> = {}
+
+    if (event.eventName !== undefined) updateData.eventName = event.eventName
+    if (event.streamId !== undefined) updateData.streamId = event.streamId
+    if (event.event !== undefined) updateData.event = JSON.stringify(event.event)
+    if (event.timestamp !== undefined) updateData.timestamp = event.timestamp
+    if (event.status !== undefined) updateData.status = event.status
+    if (event.type !== undefined) updateData.type = event.type
+    if (event.meta !== undefined) updateData.meta = JSON.stringify(event.meta)
+    if (event.retryCount !== undefined) updateData.retryCount = event.retryCount
+    if (event.lockedAt !== undefined) updateData.lockedAt = event.lockedAt
+    if (event.lockedBy !== undefined) updateData.lockedBy = event.lockedBy
+    if (event.nextRetryAt !== undefined) updateData.nextRetryAt = event.nextRetryAt
+
+    if (Object.keys(updateData).length === 0) {
+      return
+    }
+
+    await db.updateTable("events").set(updateData).where("eventId", "=", eventId).execute()
   }
 
   public async findByEventIds(
@@ -93,35 +114,50 @@ export class PersistentEventStore implements IEventStore {
     fields?: (keyof IPersistedEvent)[],
     type?: EventTypes,
   ): Promise<IPersistedEvent[]> {
-    const rows = await db
-      .select(
-        "events",
-        omitBy(
-          {
-            event_id: db.sql`${"event_id"} IN (${db.vals(eventIds)})`,
-            type,
-          },
-          isNil,
-        ),
-        fields?.length ? { columns: this.mapFieldsToCols(fields) } : undefined,
-      )
-      .run(this.pool);
-    return rows.map(this.mapRowToEvent);
+    if (!eventIds.length) {
+      return []
+    }
+
+    let qb = this.db.selectFrom("events")
+
+    // Select specific fields or all
+    if (fields?.length) {
+      qb = qb.select(fields as (keyof IPersistedEvent & string)[])
+    } else {
+      qb = qb.selectAll()
+    }
+
+    qb = qb.where("eventId", "in", eventIds)
+
+    if (type) {
+      qb = qb.where("type", "=", type)
+    }
+
+    const rows = await qb.execute()
+    return rows as unknown as IPersistedEvent[]
   }
 
   public async findUnprocessedCommands(
     ignoredEventIds?: string[],
     fields?: (keyof IPersistedEvent)[],
   ): Promise<IPersistedEvent[]> {
-    const extra = ignoredEventIds?.length
-      ? ` AND event_id NOT IN (${ignoredEventIds.map(e => `'${e}'`).join(",")})`
-      : "";
-    const mappedFields = fields?.length ? `${this.mapFieldsToCols(fields).join(",")}` : "*";
-    const { rows } = await this.pool.query(
-      `SELECT ${mappedFields} from events e WHERE e.status = 'CREATED' AND type = 'COMMAND'${extra}`,
-    );
+    let qb = this.db.selectFrom("events")
 
-    return rows.map(this.mapRowToEvent);
+    // Select specific fields or all
+    if (fields?.length) {
+      qb = qb.select(fields as (keyof IPersistedEvent & string)[])
+    } else {
+      qb = qb.selectAll()
+    }
+
+    qb = qb.where("status", "=", "CREATED").where("type", "=", "COMMAND")
+
+    if (ignoredEventIds?.length) {
+      qb = qb.where("eventId", "not in", ignoredEventIds)
+    }
+
+    const rows = await qb.execute()
+    return rows as unknown as IPersistedEvent[]
   }
 
   public async findByStreamIds(
@@ -129,34 +165,26 @@ export class PersistentEventStore implements IEventStore {
     fields?: (keyof IPersistedEvent)[],
     type?: EventTypes,
   ): Promise<IPersistedEvent[]> {
-    const rows = await db
-      .select(
-        "events",
-        omitBy(
-          {
-            streamId: db.sql`${"stream_id"} IN (${db.vals(streamIds)})`,
-            type,
-          },
-          isNil,
-        ),
-        fields?.length ? { columns: this.mapFieldsToCols(fields) } : undefined,
-      )
-      .run(this.pool);
-    return rows.map(this.mapRowToEvent);
-  }
-
-  private mapFieldsToCols(fields: (keyof IPersistedEvent)[]): any[] {
-    return fields.map(snakeCase) as any[];
-  }
-
-  private mapRowToEvent(row: Record<string, any>): IPersistedEvent {
-    return Object.entries(row).reduce((acc, [k, v]) => ({ ...acc, [camelCase(k)]: v }), {}) as IPersistedEvent;
-  }
-
-  private get pool() {
-    if (!this._pool) {
-      this._pool = this.opts.client;
+    if (!streamIds.length) {
+      return []
     }
-    return this._pool;
+
+    let qb = this.db.selectFrom("events")
+
+    // Select specific fields or all
+    if (fields?.length) {
+      qb = qb.select(fields as (keyof IPersistedEvent & string)[])
+    } else {
+      qb = qb.selectAll()
+    }
+
+    qb = qb.where("streamId", "in", streamIds)
+
+    if (type) {
+      qb = qb.where("type", "=", type)
+    }
+
+    const rows = await qb.execute()
+    return rows as unknown as IPersistedEvent[]
   }
 }

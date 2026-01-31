@@ -1,16 +1,15 @@
-import type { ICommandBus, IPersistenceSettingsWithClient } from "../types.js";
-import { InMemoryEventScheduler, PersistentEventScheduler } from "./PersistentEventScheduler.js";
+import type { ICommandBus, IPersistenceSettings, Logger } from "../types.js"
+import { InMemoryEventScheduler, PersistentEventScheduler } from "./PersistentEventScheduler.js"
 
-import type { IEventScheduler } from "./types.js";
-import type { Logger } from "@figedi/svc";
+import type { IEventScheduler } from "./types.js"
 
 export const createEventScheduler = (
-  opts: IPersistenceSettingsWithClient,
+  opts: IPersistenceSettings,
   commandBus: ICommandBus,
   logger: Logger,
 ): IEventScheduler => {
   if (opts.type === "pg") {
-    return new PersistentEventScheduler(opts, commandBus, logger);
+    return new PersistentEventScheduler(opts, commandBus, logger)
   }
-  return new InMemoryEventScheduler(opts, commandBus, logger);
-};
+  return new InMemoryEventScheduler(opts, commandBus, logger)
+}

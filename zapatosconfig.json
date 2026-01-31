@@ -1,6 +1,0 @@
-{
-    "db": {
-        "connectionString": "{{DATABASE_URL}}"
-    },
-    "outDir": "./src/infrastructure/db"
-  }

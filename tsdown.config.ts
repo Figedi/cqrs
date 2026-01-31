@@ -1,7 +1,7 @@
-import { defineConfig } from "tsup";
+import { defineConfig } from "tsdown"
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/*.spec.ts"],
+  entry: ["src/index.ts"],
   format: ["cjs", "esm"],
   outDir: "dist",
   sourcemap: false,
@@ -9,4 +9,5 @@ export default defineConfig({
   shims: false,
   clean: true,
   treeshake: true,
-});
+  target: false,
+})

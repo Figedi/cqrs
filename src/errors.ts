@@ -13,6 +13,6 @@ export class TxTimeoutError extends Error {
     public message: string,
     public code: string,
   ) {
-    super(message);
+    super(message)
   }
 }
