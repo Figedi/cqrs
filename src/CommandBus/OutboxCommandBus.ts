@@ -1,12 +1,32 @@
-import { isLeft, left, right } from "fp-ts/lib/Either.js";
-import type { Left } from "fp-ts/lib/Either.js";
-import { v4 as uuid } from "uuid";
-import { serializeError } from "serialize-error";
-import { Observable } from "rxjs";
-
-import type { Pool } from "pg";
-import type { Transaction } from "kysely";
-
+import type { Left } from "fp-ts/lib/Either.js"
+import { isLeft, left, right } from "fp-ts/lib/Either.js"
+import type { Transaction } from "kysely"
+import type { Pool } from "pg"
+import { Observable } from "rxjs"
+import { serializeError } from "serialize-error"
+import { v4 as uuid } from "uuid"
+import { deserializeEvent, serializeEvent } from "../common.js"
+import {
+  ApplicationError,
+  EventByIdNotFoundError,
+  EventIdMissingError,
+  NoHandlerFoundError,
+  TimeoutExceededError,
+} from "../errors.js"
+import type { Database, KyselyDb } from "../infrastructure/db/index.js"
+import { createPollingWorker, type PollingWorker } from "../infrastructure/PollingWorker.js"
+import type {
+  EventStatus,
+  IEventStore,
+  IPersistedEvent,
+  IRateLimitConfig,
+  IWorkerConfig,
+} from "../infrastructure/types.js"
+import {
+  createStreamController,
+  type IStreamEvent,
+  type StreamController,
+} from "../infrastructure/utils/StreamController.js"
 import type {
   AnyEither,
   Constructor,
@@ -15,32 +35,26 @@ import type {
   ICommand,
   ICommandBus,
   ICommandHandler,
-  Logger,
-  ServiceWithLifecycleHandlers,
   IDecorator,
   IHandlerConfig,
   ITransactionalScope,
+  Logger,
+  ServiceWithLifecycleHandlers,
   StringEither,
   VoidEither,
-} from "../types.js";
-import { deserializeEvent, serializeEvent } from "../common.js";
-import { ApplicationError, EventByIdNotFoundError, EventIdMissingError, NoHandlerFoundError, TimeoutExceededError } from "../errors.js";
-import type { EventStatus, IEventStore, IPersistedEvent, IRateLimitConfig, IWorkerConfig } from "../infrastructure/types.js";
-import type { Database, KyselyDb } from "../infrastructure/db/index.js";
-import { createPollingWorker, type PollingWorker } from "../infrastructure/PollingWorker.js";
-import { createStreamController, type StreamController, type IStreamEvent } from "../infrastructure/utils/StreamController.js";
+} from "../types.js"
 
 interface IHandlerMeta {
-  handles?: Constructor<ICommand>;
-  topic: string;
-  maxPerSecond?: number;
-  concurrency?: number;
-  retries?: IHandlerConfig["retries"];
+  handles?: Constructor<ICommand>
+  topic: string
+  maxPerSecond?: number
+  concurrency?: number
+  retries?: IHandlerConfig["retries"]
 }
 
 interface IRegisteredHandler {
-  handler: ICommandHandler<any, any>;
-  meta: IHandlerMeta;
+  handler: ICommandHandler<any, any>
+  meta: IHandlerMeta
 }
 
 /**
@@ -56,12 +70,12 @@ interface IRegisteredHandler {
  * - AsyncIterator-based streaming with RxJS shorthand
  */
 export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandlers {
-  public registeredCommands: Constructor<ICommand>[] = [];
+  public registeredCommands: Constructor<ICommand>[] = []
 
-  private handlers: Map<string, IRegisteredHandler> = new Map();
-  private decorators: IDecorator[] = [];
-  private pollingWorker?: PollingWorker;
-  private streamController?: StreamController;
+  private handlers: Map<string, IRegisteredHandler> = new Map()
+  private decorators: IDecorator[] = []
+  private pollingWorker?: PollingWorker
+  private streamController?: StreamController
 
   constructor(
     private logger: Logger,
@@ -84,20 +98,20 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
       "COMMAND",
       this.workerConfig,
       this.rateLimitConfig,
-    );
+    )
 
-    await this.pollingWorker.initialize();
+    await this.pollingWorker.initialize()
 
     // Create stream controller for streaming API
-    this.streamController = createStreamController();
+    this.streamController = createStreamController()
 
     // Start polling
     await this.pollingWorker.start(
       async (event, client) => this.processEvent(event, client),
       (event, status, error) => this.onEventCompletion(event, status, error),
-    );
+    )
 
-    this.logger.info("OutboxCommandBus started");
+    this.logger.info("OutboxCommandBus started")
   }
 
   /**
@@ -105,19 +119,19 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
    */
   async shutdown(): Promise<void> {
     if (this.pollingWorker) {
-      await this.pollingWorker.stop();
+      await this.pollingWorker.stop()
     }
     if (this.streamController) {
-      this.streamController.close();
+      this.streamController.close()
     }
-    this.logger.info("OutboxCommandBus stopped");
+    this.logger.info("OutboxCommandBus stopped")
   }
 
   /**
    * Register a decorator for command handlers.
    */
   registerDecorator(decorator: IDecorator): void {
-    this.decorators.push(decorator);
+    this.decorators.push(decorator)
   }
 
   /**
@@ -125,8 +139,8 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
    */
   register(...handlers: ICommandHandler<any, any>[]): void {
     for (const handler of handlers) {
-      const topic = handler.config.topic;
-      const decoratedHandler = this.decorateHandler(handler);
+      const topic = handler.config.topic
+      const decoratedHandler = this.decorateHandler(handler)
 
       this.handlers.set(topic, {
         handler: decoratedHandler,
@@ -137,10 +151,10 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
           concurrency: handler.config.concurrency,
           retries: handler.config.retries,
         },
-      });
+      })
 
       if (handler.config.handles) {
-        this.registeredCommands.push(handler.config.handles);
+        this.registeredCommands.push(handler.config.handles)
       }
     }
   }
@@ -149,11 +163,11 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
    * Deserialize a persisted event back to a command instance.
    */
   deserializeCommand(event: IPersistedEvent): ICommand {
-    const registered = this.handlers.get(event.eventName);
+    const registered = this.handlers.get(event.eventName)
     if (!registered?.meta.handles) {
-      throw new ApplicationError(`Did not find registered command for event ${event.eventName}`);
+      throw new ApplicationError(`Did not find registered command for event ${event.eventName}`)
     }
-    return deserializeEvent(event.event, registered.meta.handles) as ICommand;
+    return deserializeEvent(event.event, registered.meta.handles) as ICommand
   }
 
   /**
@@ -170,18 +184,18 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
     command: ICommand<T, TCommandRes>,
     opts?: ExecuteOpts,
   ): Promise<TRes> {
-    const eventId = command.meta?.eventId || opts?.eventId || uuid();
-    const streamId = command.meta?.streamId || opts?.streamId || eventId;
-    const transient = command.meta?.transient || opts?.transient;
-    const now = new Date();
+    const eventId = command.meta?.eventId || opts?.eventId || uuid()
+    const streamId = command.meta?.streamId || opts?.streamId || eventId
+    const transient = command.meta?.transient || opts?.transient
+    const now = new Date()
 
     // Update command meta with eventId
-    command.meta = { ...command.meta, eventId };
+    command.meta = { ...command.meta, eventId }
 
     // Transient commands bypass persistence
     if (transient) {
-      await this.processCommandDirectly(command, opts?.scope || this.db);
-      return right(streamId) as TRes;
+      await this.processCommandDirectly(command, opts?.scope || this.db)
+      return right(streamId) as TRes
     }
 
     try {
@@ -197,13 +211,13 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
           type: "COMMAND",
         },
         { scope: opts?.scope },
-      );
+      )
 
-      return right(streamId) as TRes;
+      return right(streamId) as TRes
     } catch (e) {
-      const result = left(e) as TRes;
-      await this.onLeftResult(eventId, result as Left<Error>);
-      return result;
+      const result = left(e) as TRes
+      await this.onLeftResult(eventId, result as Left<Error>)
+      return result
     }
   }
 
@@ -220,39 +234,39 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
     command: ICommand<T, TCommandRes>,
     opts?: ExecuteOpts,
   ): Promise<TRes> {
-    const executeResult = await this.execute(command, opts);
+    const executeResult = await this.execute(command, opts)
     if (isLeft(executeResult)) {
-      return executeResult as TRes;
+      return executeResult as TRes
     }
 
-    const eventId = command.meta.eventId!;
-    const timeout = opts?.timeout || 0;
+    const eventId = command.meta.eventId!
+    const timeout = opts?.timeout || 0
 
     if (!this.pollingWorker) {
-      throw new ApplicationError("PollingWorker not initialized");
+      throw new ApplicationError("PollingWorker not initialized")
     }
 
     try {
-      const status = await this.pollingWorker.waitForCompletion(eventId, timeout);
+      const status = await this.pollingWorker.waitForCompletion(eventId, timeout)
 
       if (status === "PROCESSED") {
         // Fetch the result from the event store
-        const [event] = await this.eventStore.findByEventIds([eventId]);
+        const [event] = await this.eventStore.findByEventIds([eventId])
         if (event?.meta && "result" in event.meta) {
-          return event.meta.result as TRes;
+          return event.meta.result as TRes
         }
-        return right(undefined) as TRes;
+        return right(undefined) as TRes
       } else {
         // FAILED or ABORTED
-        const [event] = await this.eventStore.findByEventIds([eventId]);
-        const error = event?.meta?.error || new Error(`Command ${status}`);
-        return left(error) as TRes;
+        const [event] = await this.eventStore.findByEventIds([eventId])
+        const error = event?.meta?.error || new Error(`Command ${status}`)
+        return left(error) as TRes
       }
     } catch (e) {
       if (e instanceof Error && e.message.includes("Timeout")) {
-        throw new TimeoutExceededError(`Timeout while waiting for command ${eventId}`);
+        throw new TimeoutExceededError(`Timeout while waiting for command ${eventId}`)
       }
-      throw e;
+      throw e
     }
   }
 
@@ -268,37 +282,35 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
    * @param opts.waitForAll - Whether to wait for all in-flight operations (default: false)
    */
   async drain(opts?: DrainOptions): Promise<void> {
-    const { ignoredEventIds, timeoutMs = 30000, waitForAll = false } = opts ?? {};
+    const { ignoredEventIds, timeoutMs = 30000, waitForAll = false } = opts ?? {}
 
     // First, abort any ignored commands so polling worker won't pick them up
     if (ignoredEventIds?.length) {
       for (const eventId of ignoredEventIds) {
-        this.logger.info(`Aborting ignored event during drain: ${eventId}`);
-        await this.eventStore.updateByEventId(eventId, { status: "ABORTED" });
+        this.logger.info(`Aborting ignored event during drain: ${eventId}`)
+        await this.eventStore.updateByEventId(eventId, { status: "ABORTED" })
       }
     }
 
     // Then find remaining unprocessed commands and ensure they're ready for processing
-    const unprocessedEvents = await this.eventStore.findUnprocessedCommands();
+    const unprocessedEvents = await this.eventStore.findUnprocessedCommands()
 
     for (const event of unprocessedEvents) {
-      const registered = this.handlers.get(event.eventName);
+      const registered = this.handlers.get(event.eventName)
       if (registered?.meta.handles) {
-        this.logger.info(`Draining previous event: ${event.eventId} (${event.eventName})`);
+        this.logger.info(`Draining previous event: ${event.eventId} (${event.eventName})`)
         // Reset to CREATED so polling worker picks it up
-        await this.eventStore.updateByEventId(event.eventId, { status: "CREATED" });
+        await this.eventStore.updateByEventId(event.eventId, { status: "CREATED" })
       }
     }
 
     // If waitForAll is true, wait for all in-flight operations to complete
     if (waitForAll && unprocessedEvents.length > 0 && this.pollingWorker) {
-      const eventIds = unprocessedEvents
-        .filter((e) => !ignoredEventIds?.includes(e.eventId))
-        .map((e) => e.eventId);
+      const eventIds = unprocessedEvents.filter(e => !ignoredEventIds?.includes(e.eventId)).map(e => e.eventId)
 
       if (eventIds.length > 0) {
-        this.logger.info(`Waiting for ${eventIds.length} events to complete (timeout: ${timeoutMs}ms)`);
-        await this.pollingWorker.waitForCompletionBatch(eventIds, timeoutMs);
+        this.logger.info(`Waiting for ${eventIds.length} events to complete (timeout: ${timeoutMs}ms)`)
+        await this.pollingWorker.waitForCompletionBatch(eventIds, timeoutMs)
       }
     }
   }
@@ -307,11 +319,11 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
    * Replay all failed commands.
    */
   async replayAllFailed(opts?: ExecuteOpts): Promise<void> {
-    const events = await this.eventStore.find({ status: "FAILED", type: "COMMAND" });
+    const events = await this.eventStore.find({ status: "FAILED", type: "COMMAND" })
 
     for (const event of events) {
-      this.logger.info({ eventId: event.eventId, eventName: event.eventName }, "Replaying failed command");
-      await this.replay(event.eventId, opts);
+      this.logger.info({ eventId: event.eventId, eventName: event.eventName }, "Replaying failed command")
+      await this.replay(event.eventId, opts)
     }
   }
 
@@ -326,21 +338,21 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
     commandOrEventId: string | ICommand<T, TCommandRes>,
     _opts?: ExecuteOpts,
   ): Promise<TRes> {
-    let eventId: string;
-    let streamId: string;
+    let eventId: string
+    let streamId: string
 
     if (typeof commandOrEventId === "string") {
-      const [event] = await this.eventStore.findByEventIds([commandOrEventId], undefined, "COMMAND");
+      const [event] = await this.eventStore.findByEventIds([commandOrEventId], undefined, "COMMAND")
       if (!event) {
-        throw new EventByIdNotFoundError(`Did not find command by id ${commandOrEventId}`);
+        throw new EventByIdNotFoundError(`Did not find command by id ${commandOrEventId}`)
       }
-      eventId = event.eventId;
-      streamId = event.streamId;
+      eventId = event.eventId
+      streamId = event.streamId
     } else {
-      eventId = commandOrEventId.meta?.eventId!;
-      streamId = commandOrEventId.meta?.streamId ?? eventId;
+      eventId = commandOrEventId.meta?.eventId!
+      streamId = commandOrEventId.meta?.streamId ?? eventId
       if (!eventId) {
-        throw new EventIdMissingError("Need at least an eventId, was this command properly deserialized?");
+        throw new EventIdMissingError("Need at least an eventId, was this command properly deserialized?")
       }
     }
 
@@ -350,9 +362,9 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
       meta: {},
       retryCount: 0,
       nextRetryAt: new Date(),
-    });
+    })
 
-    return right(streamId) as TRes;
+    return right(streamId) as TRes
   }
 
   /**
@@ -363,38 +375,38 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
    */
   stream(topic?: string): Observable<ICommand> {
     if (!this.streamController) {
-      throw new ApplicationError("StreamController not initialized");
+      throw new ApplicationError("StreamController not initialized")
     }
 
-    const observable = this.streamController.stream$();
+    const observable = this.streamController.stream$()
 
     if (topic) {
-      return new Observable((subscriber) => {
+      return new Observable(subscriber => {
         const subscription = observable.subscribe({
-          next: (streamEvent) => {
+          next: streamEvent => {
             if (streamEvent.event.eventName === topic) {
-              const command = this.deserializeCommand(streamEvent.event);
-              subscriber.next(command);
+              const command = this.deserializeCommand(streamEvent.event)
+              subscriber.next(command)
             }
           },
-          error: (err) => subscriber.error(err),
+          error: err => subscriber.error(err),
           complete: () => subscriber.complete(),
-        });
-        return () => subscription.unsubscribe();
-      });
+        })
+        return () => subscription.unsubscribe()
+      })
     }
 
-    return new Observable((subscriber) => {
+    return new Observable(subscriber => {
       const subscription = observable.subscribe({
-        next: (streamEvent) => {
-          const command = this.deserializeCommand(streamEvent.event);
-          subscriber.next(command);
+        next: streamEvent => {
+          const command = this.deserializeCommand(streamEvent.event)
+          subscriber.next(command)
         },
-        error: (err) => subscriber.error(err),
+        error: err => subscriber.error(err),
         complete: () => subscriber.complete(),
-      });
-      return () => subscription.unsubscribe();
-    });
+      })
+      return () => subscription.unsubscribe()
+    })
   }
 
   /**
@@ -402,9 +414,9 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
    */
   getStreamIterator(): AsyncIterableIterator<IStreamEvent> {
     if (!this.streamController) {
-      throw new ApplicationError("StreamController not initialized");
+      throw new ApplicationError("StreamController not initialized")
     }
-    return this.streamController.getIterator();
+    return this.streamController.getIterator()
   }
 
   /**
@@ -412,58 +424,59 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
    */
   stream$(): Observable<IStreamEvent> {
     if (!this.streamController) {
-      throw new ApplicationError("StreamController not initialized");
+      throw new ApplicationError("StreamController not initialized")
     }
-    return this.streamController.stream$();
+    return this.streamController.stream$()
   }
 
   /**
    * Process a command event from the polling worker.
    */
   private async processEvent(event: IPersistedEvent, trx: Transaction<Database>): Promise<void> {
-    const registered = this.handlers.get(event.eventName);
+    const registered = this.handlers.get(event.eventName)
     if (!registered) {
-      throw new NoHandlerFoundError(`No handler registered for ${event.eventName}`);
+      throw new NoHandlerFoundError(`No handler registered for ${event.eventName}`)
     }
 
-    const command = this.deserializeCommand(event);
+    const command = this.deserializeCommand(event)
     const ctx = {
       logger: this.logger,
       scope: trx,
-    };
+    }
 
-    const result = await registered.handler.handle(command, ctx);
+    const result = await registered.handler.handle(command, ctx)
 
     // Store result in meta for executeSync retrieval
     if (!isLeft(result)) {
-      await this.eventStore.updateByEventId(event.eventId, {
-        meta: { ...event.meta, result },
-      }, { scope: trx });
+      await this.eventStore.updateByEventId(
+        event.eventId,
+        {
+          meta: { ...event.meta, result },
+        },
+        { scope: trx },
+      )
     }
 
     if (isLeft(result)) {
-      throw result.left;
+      throw result.left
     }
   }
 
   /**
    * Process a transient command directly (bypasses outbox).
    */
-  private async processCommandDirectly(
-    command: ICommand,
-    scope: ITransactionalScope,
-  ): Promise<void> {
-    const registered = this.handlers.get(command.meta.className);
+  private async processCommandDirectly(command: ICommand, scope: ITransactionalScope): Promise<void> {
+    const registered = this.handlers.get(command.meta.className)
     if (!registered) {
-      throw new NoHandlerFoundError(`No handler registered for ${command.meta.className}`);
+      throw new NoHandlerFoundError(`No handler registered for ${command.meta.className}`)
     }
 
     const ctx = {
       logger: this.logger,
       scope,
-    };
+    }
 
-    await registered.handler.handle(command, ctx);
+    await registered.handler.handle(command, ctx)
   }
 
   /**
@@ -476,7 +489,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
         event,
         status: status as "PROCESSED" | "FAILED" | "ABORTED",
         error,
-      });
+      })
     }
   }
 
@@ -489,7 +502,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
     return this.decorators.reduce(
       (acc, decorator) => decorator.decorate(acc) as ICommandHandler<TPayload, TRes>,
       handler,
-    );
+    )
   }
 
   /**
@@ -502,7 +515,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
         lastCalled: new Date(),
         error: serializeError(leftResult.left),
       },
-    });
+    })
   }
 }
 
@@ -517,5 +530,5 @@ export function createOutboxCommandBus(
   workerConfig?: Partial<IWorkerConfig>,
   rateLimitConfig?: IRateLimitConfig,
 ): OutboxCommandBus {
-  return new OutboxCommandBus(logger, eventStore, db, pool, workerConfig, rateLimitConfig);
+  return new OutboxCommandBus(logger, eventStore, db, pool, workerConfig, rateLimitConfig)
 }

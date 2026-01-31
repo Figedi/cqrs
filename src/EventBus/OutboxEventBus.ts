@@ -1,11 +1,26 @@
-import type { Pool } from "pg";
-import { left, right } from "fp-ts/lib/Either.js";
-import { v4 as uuid } from "uuid";
-import { serializeError } from "serialize-error";
-import { type Observable, Subject } from "rxjs";
-import { share } from "rxjs/operators";
-import type { Subscription } from "rxjs";
-
+import { left, right } from "fp-ts/lib/Either.js"
+import type { Pool } from "pg"
+import type { Subscription } from "rxjs"
+import { type Observable, Subject } from "rxjs"
+import { share } from "rxjs/operators"
+import { serializeError } from "serialize-error"
+import { v4 as uuid } from "uuid"
+import { deserializeEvent, serializeEvent } from "../common.js"
+import { ApplicationError } from "../errors.js"
+import type { KyselyDb } from "../infrastructure/db/index.js"
+import { createPollingWorker, type PollingWorker } from "../infrastructure/PollingWorker.js"
+import type {
+  EventStatus,
+  IEventStore,
+  IPersistedEvent,
+  IRateLimitConfig,
+  IWorkerConfig,
+} from "../infrastructure/types.js"
+import {
+  createStreamController,
+  type IStreamEvent,
+  type StreamController,
+} from "../infrastructure/utils/StreamController.js"
 import type {
   ClassContextProvider,
   Constructor,
@@ -16,14 +31,8 @@ import type {
   Logger,
   ServiceWithLifecycleHandlers,
   StringEither,
-} from "../types.js";
-import { deserializeEvent, serializeEvent } from "../common.js";
-import { ApplicationError } from "../errors.js";
-import type { EventStatus, IEventStore, IPersistedEvent, IRateLimitConfig, IWorkerConfig } from "../infrastructure/types.js";
-import type { KyselyDb } from "../infrastructure/db/index.js";
-import { createPollingWorker, type PollingWorker } from "../infrastructure/PollingWorker.js";
-import { createStreamController, type StreamController, type IStreamEvent } from "../infrastructure/utils/StreamController.js";
-import { SagaTriggeredCommandEvent } from "../utils/internalEvents.js";
+} from "../types.js"
+import { SagaTriggeredCommandEvent } from "../utils/internalEvents.js"
 
 /**
  * OutboxEventBus implements the Transactional Outbox pattern for reliable
@@ -35,15 +44,15 @@ import { SagaTriggeredCommandEvent } from "../utils/internalEvents.js";
  * - Supports sagas for event-driven command triggering
  */
 export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
-  protected registeredEvents: Constructor<IEvent>[] = [];
+  protected registeredEvents: Constructor<IEvent>[] = []
 
-  private sagaSubscriptions: Record<string, Subscription> = {};
-  private pollingWorker?: PollingWorker;
-  private streamController?: StreamController;
+  private sagaSubscriptions: Record<string, Subscription> = {}
+  private pollingWorker?: PollingWorker
+  private streamController?: StreamController
 
   // Internal RxJS subjects for saga compatibility
-  private in$ = new Subject<IEvent>();
-  private out$ = this.in$.pipe(share());
+  private in$ = new Subject<IEvent>()
+  private out$ = this.in$.pipe(share())
 
   constructor(
     private readonly logger: Logger,
@@ -67,20 +76,20 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
       "EVENT",
       this.workerConfig,
       this.rateLimitConfig,
-    );
+    )
 
-    await this.pollingWorker.initialize();
+    await this.pollingWorker.initialize()
 
     // Create stream controller
-    this.streamController = createStreamController();
+    this.streamController = createStreamController()
 
     // Start polling
     await this.pollingWorker.start(
-      async (event) => this.processEvent(event),
+      async event => this.processEvent(event),
       (event, status, error) => this.onEventCompletion(event, status, error),
-    );
+    )
 
-    this.logger.info("OutboxEventBus started");
+    this.logger.info("OutboxEventBus started")
   }
 
   /**
@@ -88,36 +97,34 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
    */
   async shutdown(): Promise<void> {
     // Unsubscribe from sagas
-    Object.values(this.sagaSubscriptions).forEach((subscription) => subscription.unsubscribe());
-    this.sagaSubscriptions = {};
+    Object.values(this.sagaSubscriptions).forEach(subscription => subscription.unsubscribe())
+    this.sagaSubscriptions = {}
 
     if (this.pollingWorker) {
-      await this.pollingWorker.stop();
+      await this.pollingWorker.stop()
     }
     if (this.streamController) {
-      this.streamController.close();
+      this.streamController.close()
     }
-    this.logger.info("OutboxEventBus stopped");
+    this.logger.info("OutboxEventBus stopped")
   }
 
   /**
    * Deserialize a persisted event back to an event instance.
    */
   deserializeEvent(event: IPersistedEvent): IEvent {
-    const klass = this.registeredEvents.find(
-      (registeredEv) => registeredEv.name === event.eventName,
-    );
+    const klass = this.registeredEvents.find(registeredEv => registeredEv.name === event.eventName)
     if (!klass) {
-      throw new ApplicationError(`Did not find registered event for event ${event.eventName}`);
+      throw new ApplicationError(`Did not find registered event for event ${event.eventName}`)
     }
-    return deserializeEvent(event.event, klass) as IEvent;
+    return deserializeEvent(event.event, klass) as IEvent
   }
 
   /**
    * Register event classes.
    */
   register(...events: Constructor<IEvent>[]): void {
-    this.registeredEvents.push(...events);
+    this.registeredEvents.push(...events)
   }
 
   /**
@@ -125,22 +132,22 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
    */
   registerSagas(...sagas: ISaga[]): void {
     for (const saga of sagas) {
-      const sagaName = saga.constructor.name;
+      const sagaName = saga.constructor.name
       if (!this.shouldIgnoreSaga(sagaName)) {
-        const stream$ = saga.process(this.out$);
-        const { commandBus } = this.ctxProvider();
-        const subscription = stream$.subscribe((command) => {
+        const stream$ = saga.process(this.out$)
+        const { commandBus } = this.ctxProvider()
+        const subscription = stream$.subscribe(command => {
           this.execute(
             new SagaTriggeredCommandEvent({
               sagaName: saga.constructor.name,
               outgoingEventId: command.meta.eventId,
               outgoingEventName: command.constructor.name,
             }),
-          );
-          return commandBus.execute(command);
-        });
+          )
+          return commandBus.execute(command)
+        })
 
-        this.sagaSubscriptions[sagaName] = subscription;
+        this.sagaSubscriptions[sagaName] = subscription
       }
     }
   }
@@ -159,18 +166,18 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
     event: IEvent<T, IEventRes>,
     opts?: ExecuteOpts,
   ): Promise<TRes> {
-    const eventId = event.meta?.eventId || opts?.eventId || uuid();
-    const streamId = event.meta?.streamId || opts?.streamId || eventId;
-    const transient = event.meta?.transient || opts?.transient;
-    const delayUntilNextTick = opts?.delayUntilNextTick ?? false;
+    const eventId = event.meta?.eventId || opts?.eventId || uuid()
+    const streamId = event.meta?.streamId || opts?.streamId || eventId
+    const transient = event.meta?.transient || opts?.transient
+    const delayUntilNextTick = opts?.delayUntilNextTick ?? false
 
-    const now = new Date();
-    event.meta = { ...event.meta, eventId, streamId };
+    const now = new Date()
+    event.meta = { ...event.meta, eventId, streamId }
 
     // Transient events bypass persistence
     if (transient) {
-      this.in$.next(event);
-      return right(streamId) as TRes;
+      this.in$.next(event)
+      return right(streamId) as TRes
     }
 
     try {
@@ -187,14 +194,14 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
           type: "EVENT",
         },
         { scope: opts?.scope },
-      );
+      )
 
       // If not delayed, also emit to the internal stream for immediate saga processing
       if (!delayUntilNextTick) {
-        this.in$.next(event);
+        this.in$.next(event)
       }
 
-      return right(streamId) as TRes;
+      return right(streamId) as TRes
     } catch (e: any) {
       await this.eventStore.updateByEventId(eventId, {
         status: "FAILED",
@@ -202,9 +209,9 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
           lastCalled: now,
           error: serializeError(e),
         },
-      });
+      })
 
-      return left(e) as TRes;
+      return left(e) as TRes
     }
   }
 
@@ -213,24 +220,24 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
    */
   async replayByStreamIds<TRes extends StringEither>(streamIds: string[]): Promise<TRes[]> {
     if (!streamIds.length) {
-      return [];
+      return []
     }
 
-    this.logger.debug(`Replaying events by streamIds = ${streamIds}`);
-    const events = await this.eventStore.findByStreamIds(streamIds, undefined, "EVENT");
+    this.logger.debug(`Replaying events by streamIds = ${streamIds}`)
+    const events = await this.eventStore.findByStreamIds(streamIds, undefined, "EVENT")
 
     const deserializedEvents = events
-      .map((ev) => {
+      .map(ev => {
         try {
-          return this.deserializeEvent(ev);
+          return this.deserializeEvent(ev)
         } catch (_error) {
           this.logger.warn(
-            `Did not find a klass for event ${ev.eventName}. Available are: ${this.registeredEvents.map((e) => e.name)}`,
-          );
-          return null;
+            `Did not find a klass for event ${ev.eventName}. Available are: ${this.registeredEvents.map(e => e.name)}`,
+          )
+          return null
         }
       })
-      .filter((ev): ev is IEvent => ev !== null);
+      .filter((ev): ev is IEvent => ev !== null)
 
     // Reset events to CREATED for reprocessing
     for (const event of events) {
@@ -238,20 +245,20 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
         status: "CREATED",
         retryCount: 0,
         nextRetryAt: new Date(),
-      });
+      })
     }
 
     // Emit to internal stream for saga processing
-    deserializedEvents.forEach((ev) => this.in$.next(ev));
+    deserializedEvents.forEach(ev => this.in$.next(ev))
 
-    return deserializedEvents.map((ev) => right(ev.meta.streamId!) as TRes);
+    return deserializedEvents.map(ev => right(ev.meta.streamId!) as TRes)
   }
 
   /**
    * Get the RxJS Observable stream (for saga compatibility).
    */
   stream(): Observable<IEvent> {
-    return this.out$;
+    return this.out$
   }
 
   /**
@@ -259,9 +266,9 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
    */
   getStreamIterator(): AsyncIterableIterator<IStreamEvent> {
     if (!this.streamController) {
-      throw new ApplicationError("StreamController not initialized");
+      throw new ApplicationError("StreamController not initialized")
     }
-    return this.streamController.getIterator();
+    return this.streamController.getIterator()
   }
 
   /**
@@ -269,9 +276,9 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
    */
   stream$(): Observable<IStreamEvent> {
     if (!this.streamController) {
-      throw new ApplicationError("StreamController not initialized");
+      throw new ApplicationError("StreamController not initialized")
     }
-    return this.streamController.stream$();
+    return this.streamController.stream$()
   }
 
   /**
@@ -280,13 +287,13 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
   private async processEvent(event: IPersistedEvent): Promise<void> {
     // Deserialize and emit to internal stream for saga processing
     try {
-      const deserializedEvent = this.deserializeEvent(event);
-      this.in$.next(deserializedEvent);
+      const deserializedEvent = this.deserializeEvent(event)
+      this.in$.next(deserializedEvent)
     } catch (error) {
       this.logger.warn(
         { eventId: event.eventId, eventName: event.eventName, error },
         "Failed to deserialize event, marking as processed to prevent infinite retry",
-      );
+      )
     }
 
     // Events don't have explicit handlers like commands
@@ -303,7 +310,7 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
         event,
         status: status as "PROCESSED" | "FAILED" | "ABORTED",
         error,
-      });
+      })
     }
   }
 
@@ -312,10 +319,10 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
    */
   private shouldIgnoreSaga(sagaName: string): boolean {
     if (process.env.IGNORE_SAGAS) {
-      const ignorableSagas = process.env.IGNORE_SAGAS.split(",").map((s) => s.trim());
-      return ignorableSagas.includes(sagaName);
+      const ignorableSagas = process.env.IGNORE_SAGAS.split(",").map(s => s.trim())
+      return ignorableSagas.includes(sagaName)
     }
-    return false;
+    return false
   }
 }
 
@@ -331,5 +338,5 @@ export function createOutboxEventBus(
   workerConfig?: Partial<IWorkerConfig>,
   rateLimitConfig?: IRateLimitConfig,
 ): OutboxEventBus {
-  return new OutboxEventBus(logger, eventStore, db, pool, ctxProvider, workerConfig, rateLimitConfig);
+  return new OutboxEventBus(logger, eventStore, db, pool, ctxProvider, workerConfig, rateLimitConfig)
 }

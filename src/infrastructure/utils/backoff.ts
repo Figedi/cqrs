@@ -1,4 +1,4 @@
-import type { IRetryConfig } from "../types.js";
+import type { IRetryConfig } from "../types.js"
 
 /** Default retry configuration */
 export const DEFAULT_RETRY_CONFIG: IRetryConfig = {
@@ -8,7 +8,7 @@ export const DEFAULT_RETRY_CONFIG: IRetryConfig = {
   maxDelayMs: 300000, // 5 minutes
   multiplier: 2,
   jitterFactor: 0.1,
-};
+}
 
 /**
  * Calculate the next retry delay based on the backoff configuration.
@@ -18,35 +18,35 @@ export const DEFAULT_RETRY_CONFIG: IRetryConfig = {
  * @returns Delay in milliseconds before next retry
  */
 export function calculateBackoffDelay(retryCount: number, config: IRetryConfig): number {
-  const { backoffMode, baseDelayMs, maxDelayMs, jitterFactor, multiplier = 2 } = config;
+  const { backoffMode, baseDelayMs, maxDelayMs, jitterFactor, multiplier = 2 } = config
 
-  let delay: number;
+  let delay: number
 
   switch (backoffMode) {
     case "IMMEDIATE":
-      delay = 0;
-      break;
+      delay = 0
+      break
     case "UNIFORM":
-      delay = baseDelayMs;
-      break;
+      delay = baseDelayMs
+      break
     case "EXPONENTIAL":
       // Exponential backoff: baseDelay * multiplier^retryCount
-      delay = baseDelayMs * Math.pow(multiplier, retryCount);
-      break;
+      delay = baseDelayMs * Math.pow(multiplier, retryCount)
+      break
     default:
-      delay = baseDelayMs;
+      delay = baseDelayMs
   }
 
   // Apply maximum cap
-  delay = Math.min(delay, maxDelayMs);
+  delay = Math.min(delay, maxDelayMs)
 
   // Apply jitter to prevent thundering herd
   if (jitterFactor > 0 && delay > 0) {
-    const jitter = delay * jitterFactor * (Math.random() * 2 - 1); // +/- jitterFactor%
-    delay = Math.max(0, delay + jitter);
+    const jitter = delay * jitterFactor * (Math.random() * 2 - 1) // +/- jitterFactor%
+    delay = Math.max(0, delay + jitter)
   }
 
-  return Math.floor(delay);
+  return Math.floor(delay)
 }
 
 /**
@@ -57,13 +57,9 @@ export function calculateBackoffDelay(retryCount: number, config: IRetryConfig):
  * @param now - Current timestamp (defaults to Date.now())
  * @returns Date when next retry should be attempted
  */
-export function calculateNextRetryAt(
-  retryCount: number,
-  config: IRetryConfig,
-  now: number = Date.now(),
-): Date {
-  const delayMs = calculateBackoffDelay(retryCount, config);
-  return new Date(now + delayMs);
+export function calculateNextRetryAt(retryCount: number, config: IRetryConfig, now: number = Date.now()): Date {
+  const delayMs = calculateBackoffDelay(retryCount, config)
+  return new Date(now + delayMs)
 }
 
 /**
@@ -74,7 +70,7 @@ export function calculateNextRetryAt(
  * @returns true if event should be aborted
  */
 export function shouldAbort(retryCount: number, maxRetries: number): boolean {
-  return retryCount >= maxRetries;
+  return retryCount >= maxRetries
 }
 
 /**
@@ -87,5 +83,5 @@ export function mergeRetryConfig(partial?: Partial<IRetryConfig>): IRetryConfig 
   return {
     ...DEFAULT_RETRY_CONFIG,
     ...partial,
-  };
+  }
 }

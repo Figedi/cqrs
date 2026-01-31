@@ -1,12 +1,12 @@
-import { Observable } from "rxjs";
+import { Observable } from "rxjs"
 
-import type { IPersistedEvent } from "../types.js";
+import type { IPersistedEvent } from "../types.js"
 
 /** Event emitted through the stream */
 export interface IStreamEvent {
-  event: IPersistedEvent;
-  status: "PROCESSED" | "FAILED" | "ABORTED";
-  error?: Error;
+  event: IPersistedEvent
+  status: "PROCESSED" | "FAILED" | "ABORTED"
+  error?: Error
 }
 
 /**
@@ -16,10 +16,10 @@ export interface IStreamEvent {
  * Events are only emitted after completion (success or failure after retries exhausted).
  */
 export class StreamController {
-  private queue: IStreamEvent[] = [];
-  private resolvers: Array<(value: IteratorResult<IStreamEvent, void>) => void> = [];
-  private closed = false;
-  private error: Error | null = null;
+  private queue: IStreamEvent[] = []
+  private resolvers: Array<(value: IteratorResult<IStreamEvent, void>) => void> = []
+  private closed = false
+  private error: Error | null = null
 
   /**
    * Push an event to the stream.
@@ -29,14 +29,14 @@ export class StreamController {
    */
   push(event: IStreamEvent): void {
     if (this.closed) {
-      return;
+      return
     }
 
-    const resolver = this.resolvers.shift();
+    const resolver = this.resolvers.shift()
     if (resolver) {
-      resolver({ value: event, done: false });
+      resolver({ value: event, done: false })
     } else {
-      this.queue.push(event);
+      this.queue.push(event)
     }
   }
 
@@ -46,15 +46,15 @@ export class StreamController {
    */
   close(): void {
     if (this.closed) {
-      return;
+      return
     }
-    this.closed = true;
+    this.closed = true
 
     // Resolve all pending consumers with done=true
     for (const resolver of this.resolvers) {
-      resolver({ value: undefined, done: true });
+      resolver({ value: undefined, done: true })
     }
-    this.resolvers = [];
+    this.resolvers = []
   }
 
   /**
@@ -65,68 +65,68 @@ export class StreamController {
    */
   abort(error: Error): void {
     if (this.closed) {
-      return;
+      return
     }
-    this.closed = true;
-    this.error = error;
+    this.closed = true
+    this.error = error
 
     // Reject all pending consumers
     // Note: Since we store resolvers, we'll throw on next() instead
-    this.resolvers = [];
+    this.resolvers = []
   }
 
   /**
    * Check if the stream is closed.
    */
   isClosed(): boolean {
-    return this.closed;
+    return this.closed
   }
 
   /**
    * Get the AsyncIterator for consuming events.
    */
   getIterator(): AsyncIterableIterator<IStreamEvent> {
-    const self = this;
+    const self = this
 
     return {
       [Symbol.asyncIterator]() {
-        return this;
+        return this
       },
 
       async next(): Promise<IteratorResult<IStreamEvent, void>> {
         // Check for error first
         if (self.error) {
-          throw self.error;
+          throw self.error
         }
 
         // Return queued event if available
-        const queued = self.queue.shift();
+        const queued = self.queue.shift()
         if (queued) {
-          return { value: queued, done: false };
+          return { value: queued, done: false }
         }
 
         // If closed and no queued events, we're done
         if (self.closed) {
-          return { value: undefined, done: true };
+          return { value: undefined, done: true }
         }
 
         // Wait for next event
-        return new Promise((resolve) => {
-          self.resolvers.push(resolve);
-        });
+        return new Promise(resolve => {
+          self.resolvers.push(resolve)
+        })
       },
 
       async return(): Promise<IteratorResult<IStreamEvent, void>> {
-        self.close();
-        return { value: undefined, done: true };
+        self.close()
+        return { value: undefined, done: true }
       },
 
       async throw(error?: Error): Promise<IteratorResult<IStreamEvent, void>> {
-        const err = error || new Error("Stream aborted");
-        self.abort(err);
-        throw err;
+        const err = error || new Error("Stream aborted")
+        self.abort(err)
+        throw err
       },
-    };
+    }
   }
 
   /**
@@ -134,29 +134,29 @@ export class StreamController {
    * Convenience method for users who prefer RxJS.
    */
   stream$(): Observable<IStreamEvent> {
-    const iterator = this.getIterator();
+    const iterator = this.getIterator()
 
-    return new Observable<IStreamEvent>((subscriber) => {
+    return new Observable<IStreamEvent>(subscriber => {
       const consume = async () => {
         try {
           for await (const event of { [Symbol.asyncIterator]: () => iterator }) {
             if (subscriber.closed) {
-              break;
+              break
             }
-            subscriber.next(event);
+            subscriber.next(event)
           }
-          subscriber.complete();
+          subscriber.complete()
         } catch (error) {
-          subscriber.error(error);
+          subscriber.error(error)
         }
-      };
+      }
 
-      consume();
+      consume()
 
       return () => {
-        iterator.return?.();
-      };
-    });
+        iterator.return?.()
+      }
+    })
   }
 }
 
@@ -164,5 +164,5 @@ export class StreamController {
  * Create a new StreamController.
  */
 export function createStreamController(): StreamController {
-  return new StreamController();
+  return new StreamController()
 }

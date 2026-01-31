@@ -1,5 +1,5 @@
-import { sql } from 'kysely';
-import type { KyselyDb } from './kysely.js';
+import { sql } from "kysely"
+import type { KyselyDb } from "./kysely.js"
 
 /**
  * Run migrations for the events table.
@@ -8,37 +8,38 @@ import type { KyselyDb } from './kysely.js';
 export async function runEventsMigration(db: KyselyDb): Promise<void> {
   // Create base events table
   await db.schema
-    .createTable('events')
+    .createTable("events")
     .ifNotExists()
-    .addColumn('event_id', 'text', (col) => col.primaryKey())
-    .addColumn('event_name', 'text', (col) => col.notNull())
-    .addColumn('stream_id', 'text', (col) => col.notNull())
-    .addColumn('event', 'jsonb', (col) => col.notNull())
-    .addColumn('timestamp', 'timestamptz', (col) => col.notNull())
-    .addColumn('status', 'text', (col) => col.notNull())
-    .addColumn('type', 'text', (col) => col.notNull())
-    .addColumn('meta', 'jsonb')
-    .addColumn('retry_count', 'integer', (col) => col.defaultTo(0))
-    .addColumn('locked_at', 'timestamptz')
-    .addColumn('locked_by', 'text')
-    .addColumn('next_retry_at', 'timestamptz', (col) => col.defaultTo(sql`NOW()`))
-    .execute();
+    .addColumn("eventId", "text", col => col.primaryKey())
+    .addColumn("eventName", "text", col => col.notNull())
+    .addColumn("streamId", "text", col => col.notNull())
+    .addColumn("event", "jsonb", col => col.notNull())
+    .addColumn("timestamp", "timestamptz", col => col.notNull())
+    .addColumn("status", "text", col => col.notNull())
+    .addColumn("type", "text", col => col.notNull())
+    .addColumn("meta", "jsonb")
+    .addColumn("retryCount", "integer", col => col.defaultTo(0))
+    .addColumn("lockedAt", "timestamptz")
+    .addColumn("lockedBy", "text")
+    .addColumn("nextRetryAt", "timestamptz", col => col.defaultTo(sql`NOW()`))
+    .execute()
 
   // Create polling index (partial index - requires raw SQL)
+  // Note: We use snake_case here because it's raw SQL and the plugin handles the schema creation above mapping to snake_case
   await sql`
     CREATE INDEX IF NOT EXISTS idx_events_pending_poll
     ON events (status, type, next_retry_at, timestamp)
     WHERE status IN ('CREATED', 'FAILED')
-  `.execute(db);
+  `.execute(db)
 
-  // Create stale lock cleanup index (partial index - requires raw SQL)
+  // Create stale lock cleanup index
   await sql`
     CREATE INDEX IF NOT EXISTS idx_events_stale_locks
     ON events (locked_at)
     WHERE locked_at IS NOT NULL AND status = 'PROCESSING'
-  `.execute(db);
+  `.execute(db)
 
-  // Create LISTEN/NOTIFY function for executeSync (requires raw SQL)
+  // Create LISTEN/NOTIFY function
   await sql`
     CREATE OR REPLACE FUNCTION notify_event_status_change()
     RETURNS TRIGGER AS $$
@@ -55,17 +56,17 @@ export async function runEventsMigration(db: KyselyDb): Promise<void> {
       RETURN NEW;
     END;
     $$ LANGUAGE plpgsql
-  `.execute(db);
+  `.execute(db)
 
-  // Drop and recreate trigger to ensure correct definition
-  await sql`DROP TRIGGER IF EXISTS event_status_notify ON events`.execute(db);
+  // Drop and recreate trigger
+  await sql`DROP TRIGGER IF EXISTS event_status_notify ON events`.execute(db)
 
   await sql`
     CREATE TRIGGER event_status_notify
     AFTER UPDATE OF status ON events
     FOR EACH ROW
     EXECUTE FUNCTION notify_event_status_change()
-  `.execute(db);
+  `.execute(db)
 }
 
 /**
@@ -73,19 +74,19 @@ export async function runEventsMigration(db: KyselyDb): Promise<void> {
  */
 export async function runScheduledEventsMigration(db: KyselyDb): Promise<void> {
   await db.schema
-    .createTable('scheduled_events')
+    .createTable("scheduledEvents")
     .ifNotExists()
-    .addColumn('scheduled_event_id', 'text', (col) => col.primaryKey())
-    .addColumn('execute_at', 'timestamptz', (col) => col.notNull())
-    .addColumn('event', 'jsonb', (col) => col.notNull())
-    .addColumn('status', 'text', (col) => col.notNull())
-    .execute();
+    .addColumn("scheduledEventId", "text", col => col.primaryKey())
+    .addColumn("executeAt", "timestamptz", col => col.notNull())
+    .addColumn("event", "jsonb", col => col.notNull())
+    .addColumn("status", "text", col => col.notNull())
+    .execute()
 }
 
 /**
  * Run all CQRS migrations.
  */
 export async function runAllMigrations(db: KyselyDb): Promise<void> {
-  await runEventsMigration(db);
-  await runScheduledEventsMigration(db);
+  await runEventsMigration(db)
+  await runScheduledEventsMigration(db)
 }

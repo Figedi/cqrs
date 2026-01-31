@@ -8,20 +8,9 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "typeRoots": [
-      "./node_modules/@types",
-      "./src/infrastructure/db/zapatos"
-    ],
-    "lib": [
-      "esnext"
-    ]
+    "typeRoots": ["./node_modules/@types", "./src/infrastructure/db/zapatos"],
+    "lib": ["esnext"]
   },
-  "include": [
-    "**/*.ts",
-    "./src/infrastructure/db/zapatos/*.ts",
-  ],
-  "exclude": [
-    ".*",
-    "_*"
-  ]
+  "include": ["**/*.ts", "./src/infrastructure/db/zapatos/*.ts"],
+  "exclude": [".*", "_*"]
 }
