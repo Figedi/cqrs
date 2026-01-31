@@ -6,6 +6,7 @@ export const DEFAULT_RETRY_CONFIG: IRetryConfig = {
   backoffMode: "EXPONENTIAL",
   baseDelayMs: 1000,
   maxDelayMs: 300000, // 5 minutes
+  multiplier: 2,
   jitterFactor: 0.1,
 };
 
@@ -17,7 +18,7 @@ export const DEFAULT_RETRY_CONFIG: IRetryConfig = {
  * @returns Delay in milliseconds before next retry
  */
 export function calculateBackoffDelay(retryCount: number, config: IRetryConfig): number {
-  const { backoffMode, baseDelayMs, maxDelayMs, jitterFactor } = config;
+  const { backoffMode, baseDelayMs, maxDelayMs, jitterFactor, multiplier = 2 } = config;
 
   let delay: number;
 
@@ -29,8 +30,8 @@ export function calculateBackoffDelay(retryCount: number, config: IRetryConfig):
       delay = baseDelayMs;
       break;
     case "EXPONENTIAL":
-      // Exponential backoff: baseDelay * 2^retryCount
-      delay = baseDelayMs * Math.pow(2, retryCount);
+      // Exponential backoff: baseDelay * multiplier^retryCount
+      delay = baseDelayMs * Math.pow(multiplier, retryCount);
       break;
     default:
       delay = baseDelayMs;

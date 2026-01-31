@@ -15,6 +15,7 @@ describe("backoff utilities", () => {
       expect(DEFAULT_RETRY_CONFIG.maxRetries).to.equal(5);
       expect(DEFAULT_RETRY_CONFIG.baseDelayMs).to.equal(1000);
       expect(DEFAULT_RETRY_CONFIG.maxDelayMs).to.equal(300000);
+      expect(DEFAULT_RETRY_CONFIG.multiplier).to.equal(2);
       expect(DEFAULT_RETRY_CONFIG.jitterFactor).to.equal(0.1);
     });
   });
@@ -38,6 +39,7 @@ describe("backoff utilities", () => {
         maxRetries: 3,
         baseDelayMs: 500,
         maxDelayMs: 30000,
+        multiplier: 3,
         jitterFactor: 0.2,
       };
       const result = mergeRetryConfig(custom);
@@ -52,6 +54,7 @@ describe("backoff utilities", () => {
         maxRetries: 5,
         baseDelayMs: 1000,
         maxDelayMs: 60000,
+        multiplier: 2,
         jitterFactor: 0,
       };
 
@@ -68,6 +71,7 @@ describe("backoff utilities", () => {
         maxRetries: 5,
         baseDelayMs: 1000,
         maxDelayMs: 60000,
+        multiplier: 2,
         jitterFactor: 0,
       };
 
@@ -101,6 +105,7 @@ describe("backoff utilities", () => {
         maxRetries: 5,
         baseDelayMs: 1000,
         maxDelayMs: 60000,
+        multiplier: 2,
         jitterFactor: 0,
       };
 
@@ -135,6 +140,18 @@ describe("backoff utilities", () => {
           expect(delay).to.be.at.most(4800);
         });
       });
+
+      it("should respect custom multiplier", () => {
+        const configWith3x: IRetryConfig = { ...config, multiplier: 3 };
+
+        const delay0 = calculateBackoffDelay(0, configWith3x);
+        const delay1 = calculateBackoffDelay(1, configWith3x);
+        const delay2 = calculateBackoffDelay(2, configWith3x);
+
+        expect(delay0).to.equal(1000); // 1000 * 3^0
+        expect(delay1).to.equal(3000); // 1000 * 3^1
+        expect(delay2).to.equal(9000); // 1000 * 3^2
+      });
     });
   });
 
@@ -144,6 +161,7 @@ describe("backoff utilities", () => {
       maxRetries: 5,
       baseDelayMs: 1000,
       maxDelayMs: 60000,
+      multiplier: 2,
       jitterFactor: 0,
     };
 

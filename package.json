@@ -25,7 +25,6 @@
     "specs:watch": "vitest"
   },
   "dependencies": {
-    "backoff-rxjs": "^7.0.0",
     "fp-ts": "^2.16.11",
     "kysely": "^0.28.9",
     "lodash-es": "^4.17.22",

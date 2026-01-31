@@ -245,48 +245,52 @@ export class PollingWorker {
   }
 
   /**
-   * Poll for events with a specific status.
-   * Note: In production with multiple workers, wrap this in a transaction with FOR UPDATE SKIP LOCKED.
-   * For PGlite (single connection), we use a simpler approach.
+   * Poll for events with a specific status using FOR UPDATE SKIP LOCKED pattern.
+   * This ensures distributed workers can safely claim events without conflicts.
    */
   private async poll(status: "CREATED" | "FAILED"): Promise<IPollResult> {
-    const selected = await this.db
-      .selectFrom('events')
-      .select('eventId')
-      .where('status', '=', status)
-      .where('type', '=', this.eventType)
-      .limit(this.config.batchSize)
-      .execute();
+    return await this.db.transaction().execute(async (trx) => {
+      // SELECT with FOR UPDATE SKIP LOCKED to atomically claim rows
+      const selected = await trx
+        .selectFrom('events')
+        .select('eventId')
+        .where('status', '=', status)
+        .where('type', '=', this.eventType)
+        .limit(this.config.batchSize)
+        .forUpdate()
+        .skipLocked()
+        .execute();
 
-    if (selected.length === 0) {
-      return { claimed: [], hasMore: false };
-    }
-
-    const eventIds = selected.map((r) => r.eventId);
-
-    // Update events one by one to avoid PGlite issues with IN clause + RETURNING
-    const claimed: IPersistedEvent[] = [];
-    for (const eventId of eventIds) {
-      const result = await this.db
-        .updateTable('events')
-        .set({
-          status: 'PROCESSING',
-          lockedAt: sql`NOW()`,
-          lockedBy: this.workerId,
-        })
-        .where('eventId', '=', eventId)
-        .returningAll()
-        .executeTakeFirst();
-
-      if (result) {
-        claimed.push(result as unknown as IPersistedEvent);
+      if (selected.length === 0) {
+        return { claimed: [], hasMore: false };
       }
-    }
 
-    return {
-      claimed: claimed as unknown as IPersistedEvent[],
-      hasMore: claimed.length === this.config.batchSize,
-    };
+      const eventIds = selected.map((r) => r.eventId);
+
+      // Update events one by one to avoid PGlite issues with IN clause + RETURNING
+      const claimed: IPersistedEvent[] = [];
+      for (const eventId of eventIds) {
+        const result = await trx
+          .updateTable('events')
+          .set({
+            status: 'PROCESSING',
+            lockedAt: sql`NOW()`,
+            lockedBy: this.workerId,
+          })
+          .where('eventId', '=', eventId)
+          .returningAll()
+          .executeTakeFirst();
+
+        if (result) {
+          claimed.push(result as unknown as IPersistedEvent);
+        }
+      }
+
+      return {
+        claimed: claimed as unknown as IPersistedEvent[],
+        hasMore: claimed.length === this.config.batchSize,
+      };
+    });
   }
 
   /**

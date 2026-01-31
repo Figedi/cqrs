@@ -55,7 +55,7 @@ const createExampleCommandHandler = <
   class ExampleCommandHandler extends createCommandHandler<any>(Command) {
     constructor() {
       super({
-        retries: 3,
+        retries: { maxRetries: 3 },
         concurrency: 20,
       });
     }
@@ -473,7 +473,7 @@ describe("cqrsModule", () => {
           [cmd2.meta.eventId, streamId2, cmd2.meta.className, JSON.stringify(serializeEvent(cmd2)), new Date(), "CREATED", "COMMAND"]
         );
 
-        await cqrsModule.commandBus.drain([cmd1.meta.eventId!]);
+        await cqrsModule.commandBus.drain({ ignoredEventIds: [cmd1.meta.eventId!] });
         await cqrsModule.waitUntilSettled([streamId2]);
 
         // Use explicit count checks to avoid pretty-printer issues with vi.fn()

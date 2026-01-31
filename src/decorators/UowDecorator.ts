@@ -1,4 +1,3 @@
-import type { Transaction } from "kysely";
 import type {
   AnyEither,
   ClassContextProvider,
@@ -11,7 +10,7 @@ import type {
   Logger,
   StringEither,
 } from "../types.js";
-import type { Database, KyselyDb } from "../infrastructure/db/index.js";
+import type { KyselyDb } from "../infrastructure/db/index.js";
 import type { IsolationLevel } from "../infrastructure/db/index.js";
 import { IsolationLevels, isTransaction } from "../infrastructure/db/index.js";
 import { isCommandHandler, mergeObjectContext, mergeWithParentCommand } from "../common.js";

@@ -34,6 +34,8 @@ export interface IRetryConfig {
   baseDelayMs: number;
   /** Maximum delay cap in milliseconds (default: 300000 = 5 minutes) */
   maxDelayMs: number;
+  /** Multiplier for exponential backoff (default: 2, only used with EXPONENTIAL mode) */
+  multiplier: number;
   /** Jitter factor (0-1) to add randomness to delays (default: 0.1) */
   jitterFactor: number;
 }

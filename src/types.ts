@@ -3,10 +3,9 @@ import type { Transaction } from "kysely";
 
 import type { Either } from "fp-ts/lib/Either.js";
 import type { ErrorObject } from "serialize-error";
-import type { IPersistedEvent, IWorkerConfig, IRateLimitConfig } from "./infrastructure/types.js";
+import type { IPersistedEvent, IWorkerConfig, IRateLimitConfig, IRetryConfig } from "./infrastructure/types.js";
 import type { Observable } from "rxjs";
 import type { Option } from "fp-ts/lib/Option.js";
-import type { RetryBackoffConfig } from "backoff-rxjs";
 import type { UowTxSettings } from "./decorators/UowDecorator.js";
 import type { Database, KyselyDb } from "./infrastructure/db/index.js";
 
@@ -134,21 +133,13 @@ export interface HandlerContext {
   scope: ITransactionalScope;
 }
 
-export interface IUniformRetryOpts {
-  maxRetries: number;
-}
-
 export interface IHandlerConfig<THandler = ICommand | IQuery | IEvent> {
   handles?: Constructor<THandler>;
   topic: string; // this is the className of the Query / Command
   maxPerSecond?: number;
   concurrency?: number;
-  retries?:
-    | number
-    | {
-        mode: "UNIFORM" | "EXPONENTIAL";
-        opts?: RetryBackoffConfig | IUniformRetryOpts;
-      };
+  /** Retry configuration for failed handler executions */
+  retries?: Partial<IRetryConfig>;
   classType: CQRSEventType;
 }
 
@@ -166,6 +157,18 @@ export interface ExecuteOpts {
   scope?: ITransactionalScope;
   streamId?: string;
   eventId?: string;
+}
+
+/**
+ * Options for the drain() method on command/event buses.
+ */
+export interface DrainOptions {
+  /** Timeout in milliseconds for waiting (default: 30000) */
+  timeoutMs?: number;
+  /** Whether to wait for all in-flight operations to complete (default: false) */
+  waitForAll?: boolean;
+  /** Event IDs to ignore/abort during drain */
+  ignoredEventIds?: string[];
 }
 
 export interface ISerializedEvent<TPayload> {
@@ -215,7 +218,7 @@ export interface ICommandBus extends ServiceWithLifecycleHandlers {
   registeredCommands: Constructor<ICommand>[];
 
   registerDecorator(decorator: IDecorator): void;
-  drain(ignoredEventIds?: string[]): Promise<void>;
+  drain(opts?: DrainOptions): Promise<void>;
   deserializeCommand(commands: IPersistedEvent): ICommand;
   executeSync<TPayload, TCommandRes extends AnyEither>(
     command: ICommand<TPayload, TCommandRes>,

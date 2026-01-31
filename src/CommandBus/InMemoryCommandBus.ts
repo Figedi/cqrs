@@ -6,6 +6,7 @@ import { share } from "rxjs/operators";
 import type {
   AnyEither,
   Constructor,
+  DrainOptions,
   ExecuteOpts,
   ICommand,
   ICommandBus,
@@ -133,7 +134,7 @@ export class InMemoryCommandBus implements ICommandBus {
   /**
    * Drain is a no-op for in-memory bus.
    */
-  async drain(): Promise<void> {
+  async drain(_opts?: DrainOptions): Promise<void> {
     // No-op for in-memory
   }
 

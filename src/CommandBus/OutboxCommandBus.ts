@@ -10,6 +10,7 @@ import type { Transaction } from "kysely";
 import type {
   AnyEither,
   Constructor,
+  DrainOptions,
   ExecuteOpts,
   ICommand,
   ICommandBus,
@@ -18,7 +19,6 @@ import type {
   ServiceWithLifecycleHandlers,
   IDecorator,
   IHandlerConfig,
-  IPostgresSettings,
   ITransactionalScope,
   StringEither,
   VoidEither,
@@ -262,9 +262,14 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
    * Commands in ignoredEventIds will be marked as ABORTED so they won't be processed.
    * All other unprocessed commands will be reset to CREATED for processing.
    *
-   * @param ignoredEventIds - Event IDs to skip (will be marked ABORTED)
+   * @param opts - Drain options
+   * @param opts.ignoredEventIds - Event IDs to skip (will be marked ABORTED)
+   * @param opts.timeoutMs - Timeout in milliseconds (default: 30000)
+   * @param opts.waitForAll - Whether to wait for all in-flight operations (default: false)
    */
-  async drain(ignoredEventIds?: string[]): Promise<void> {
+  async drain(opts?: DrainOptions): Promise<void> {
+    const { ignoredEventIds, timeoutMs = 30000, waitForAll = false } = opts ?? {};
+
     // First, abort any ignored commands so polling worker won't pick them up
     if (ignoredEventIds?.length) {
       for (const eventId of ignoredEventIds) {
@@ -282,6 +287,18 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
         this.logger.info(`Draining previous event: ${event.eventId} (${event.eventName})`);
         // Reset to CREATED so polling worker picks it up
         await this.eventStore.updateByEventId(event.eventId, { status: "CREATED" });
+      }
+    }
+
+    // If waitForAll is true, wait for all in-flight operations to complete
+    if (waitForAll && unprocessedEvents.length > 0 && this.pollingWorker) {
+      const eventIds = unprocessedEvents
+        .filter((e) => !ignoredEventIds?.includes(e.eventId))
+        .map((e) => e.eventId);
+
+      if (eventIds.length > 0) {
+        this.logger.info(`Waiting for ${eventIds.length} events to complete (timeout: ${timeoutMs}ms)`);
+        await this.pollingWorker.waitForCompletionBatch(eventIds, timeoutMs);
       }
     }
   }
