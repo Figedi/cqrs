@@ -21,7 +21,6 @@ export class LoggingDecorator implements IDecorator {
     handler: ICommandHandler<T, TRes> | IQueryHandler<T, TRes>,
   ) {
     const originalHandle = handler.handle.bind(handler)
-    // eslint-disable-next-line no-param-reassign
     handler.handle = async (commandOrQuery: T, ctx: HandlerContext) => {
       const eventType = commandOrQuery.meta.classType?.toLowerCase() || CQRSEventType.QUERY
       const logger = this.rootLogger.child({

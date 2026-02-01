@@ -1,4 +1,4 @@
-import type { ICommandBus, IPersistenceSettings, Logger } from "../types.js"
+import type { ICommandBus, IInitializedPostgresSettings, IPersistenceSettings, Logger } from "../types.js"
 import { InMemoryEventScheduler, PersistentEventScheduler } from "./PersistentEventScheduler.js"
 
 import type { IEventScheduler } from "./types.js"
@@ -9,7 +9,7 @@ export const createEventScheduler = (
   logger: Logger,
 ): IEventScheduler => {
   if (opts.type === "pg") {
-    return new PersistentEventScheduler(opts, commandBus, logger)
+    return new PersistentEventScheduler(opts as IInitializedPostgresSettings, commandBus, logger)
   }
   return new InMemoryEventScheduler(opts, commandBus, logger)
 }

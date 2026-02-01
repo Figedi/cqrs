@@ -56,7 +56,6 @@ export class UowDecorator implements IDecorator {
       .filter(event => publishableEventIds.includes(event.meta?.eventId))
       .map(event => mergeWithParentCommand(event, parentCommand))
 
-    // eslint-disable-next-line no-param-reassign
     handler.publishableEvents = handler.publishableEvents.filter(
       event => !publishableEventIds.includes(event.meta?.eventId),
     )
@@ -118,7 +117,6 @@ export class UowDecorator implements IDecorator {
     }
     const originalHandle = handler.handle.bind(handler)
 
-    // eslint-disable-next-line no-param-reassign
     handler.handle = async (commandOrQuery: T, ctx: HandlerContext) => {
       const processWithoutTx = async (): Promise<TRes> => {
         try {

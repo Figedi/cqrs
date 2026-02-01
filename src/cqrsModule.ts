@@ -2,7 +2,7 @@ import pg from "pg"
 import { createCommandBus } from "./CommandBus/index.js"
 import { LoggingDecorator } from "./decorators/LoggingDecorator.js"
 import { UowDecorator } from "./decorators/UowDecorator.js"
-import { createEventBus } from "./EventBus/index.js"
+import { createEventBus, IOutboxEventBusOptions } from "./EventBus/index.js"
 import { ApplicationError } from "./errors.js"
 import { createEventScheduler } from "./infrastructure/createEventScheduler.js"
 import { createEventStore } from "./infrastructure/createEventStore.js"
@@ -12,21 +12,13 @@ import type {
   EventTypes,
   IEventScheduler,
   IEventStore,
-  IPersistedEvent,
-  IRateLimitConfig,
-  IWorkerConfig,
+  IPersistedEvent
 } from "./infrastructure/types.js"
 import { createQuerybus } from "./QueryBus/index.js"
-import type { ICommandBus, ICQRSSettings, IEventBus, IPostgresSettings, IQueryBus, Logger } from "./types.js"
+import type { ICommandBus, ICQRSSettings, IEventBus, IInitializedPostgresSettings, IInmemorySettings, IPostgresSettings, IQueryBus, Logger } from "./types.js"
 import { TimeBasedEventScheduler } from "./utils/TimeBasedEventScheduler.js"
 import { createWaitUntilIdle } from "./utils/waitUntilIdle.js"
 import { createWaitUntilSettled } from "./utils/waitUntilSettled.js"
-
-/** Outbox options for command and event buses */
-interface IOutboxOpts {
-  workerConfig?: Partial<IWorkerConfig>
-  rateLimitConfig?: IRateLimitConfig
-}
 
 export class CQRSModule {
   public timeBasedEventScheduler!: TimeBasedEventScheduler
@@ -66,30 +58,30 @@ export class CQRSModule {
     if (this.settings.persistence.type === "pg") {
       // Use provided db/pool or create new ones
       const pgSettings = this.settings.persistence as IPostgresSettings
-      if (pgSettings.db && pgSettings.pool) {
-        this.db = pgSettings.db
-        this.pool = pgSettings.pool
-      } else {
-        // Create pool and Kysely instance from environment
+      if (typeof pgSettings.driver === 'string') {
         this.pool = new pg.Pool({
-          connectionString: process.env.DATABASE_URL,
+          connectionString: pgSettings.driver,
           ...pgSettings.options,
         })
         this.db = createKyselyFromPool(this.pool)
+      } else {
+        this.db = pgSettings.driver.db
+        this.pool = pgSettings.driver.pool
       }
     }
 
     // Build opts with db and pool for pg settings
-    const opts: typeof this.settings.persistence =
+    const opts: IInitializedPostgresSettings | IInmemorySettings =
       this.settings.persistence.type === "pg"
         ? { ...this.settings.persistence, db: this.db, pool: this.pool }
         : this.settings.persistence
 
     // Prepare outbox options if enabled
-    const outboxOpts: IOutboxOpts | undefined = this.settings.outbox?.enabled
+    const outboxOpts: IOutboxEventBusOptions | undefined = this.settings.outbox?.enabled
       ? {
           workerConfig: this.settings.outbox.worker,
           rateLimitConfig: this.settings.outbox.rateLimit,
+          ignoredSagas: this.settings.outbox.ignoredSagas,
         }
       : undefined
 

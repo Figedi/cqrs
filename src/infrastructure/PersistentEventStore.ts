@@ -1,11 +1,11 @@
 import type { Transaction } from "kysely"
-import type { IPostgresSettings } from "../types.js"
+import type { IInitializedPostgresSettings } from "../types.js"
 import type { Database, KyselyDb } from "./db/index.js"
 import { runEventsMigration } from "./db/index.js"
 import type { EventTypes, IEventStore, IPersistedEvent } from "./types.js"
 
 export class PersistentEventStore implements IEventStore {
-  constructor(private opts: IPostgresSettings) {}
+  constructor(private opts: IInitializedPostgresSettings) {}
 
   private get db(): KyselyDb {
     return this.opts.db

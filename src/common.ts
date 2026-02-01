@@ -49,7 +49,6 @@ export const mergeObjectContext = <T extends IQuery | ICommand | IEvent>(
   klass: T,
   handlerCtx: HandlerContext,
 ) => {
-  // eslint-disable-next-line no-param-reassign
   klass.publish = async (delayUntilNextTick?: boolean): Promise<StringEither | AnyEither> => {
     const classType = klass.meta?.classType
     const ctx = ctxProvider()
@@ -141,14 +140,12 @@ export const createEvent = <TPayload, TRes extends StringEither = StringEither>(
 
 export const mergeWithParentEvent = (command: ICommand, parent: IEvent): ICommand => {
   const streamId = parent.meta?.streamId || parent.meta?.eventId
-  // eslint-disable-next-line no-param-reassign
   command.meta = { ...(command.meta || {}), streamId }
   return command
 }
 
 export const mergeWithParentCommand = (event: IEvent, parent: ICommand): IEvent => {
   const streamId = parent.meta?.streamId || parent.meta?.eventId
-  // eslint-disable-next-line no-param-reassign
   event.meta = { ...(event.meta || {}), streamId }
   return event
 }
@@ -211,7 +208,6 @@ export const createCommandHandler = <TRes extends AnyEither, Command extends ICo
       this.publishableEvents = events
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     public async handle(_c: Command, _ctx?: HandlerContext) {
       return left(new ApplicationError("BaseCommand-handler not usable by itself, please extend this class")) as TRes
     }
@@ -236,7 +232,6 @@ export const createQueryHandler = <TRes extends AnyEither, Query extends IQuery 
       }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     public async handle(_q: Query) {
       return left(new ApplicationError("BaseQuery-handler not usable by itself, please extend this class")) as TRes
     }

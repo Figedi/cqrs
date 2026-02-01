@@ -4,13 +4,12 @@ import type {
   AnyEither,
   ICommand,
   ICommandBus,
-  IInmemorySettings,
-  IPostgresSettings,
-  ISerializedEvent,
+  IInitializedPostgresSettings,
+  IInmemorySettings, ISerializedEvent,
   Logger,
   ScheduledEventStatus,
   ServiceWithLifecycleHandlers,
-  StringEither,
+  StringEither
 } from "../types.js"
 import type { KyselyDb } from "./db/index.js"
 import { runScheduledEventsMigration } from "./db/index.js"
@@ -20,7 +19,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
   private schedules: Record<string, NodeJS.Timeout> = {}
 
   constructor(
-    private opts: IPostgresSettings,
+    private opts: IInitializedPostgresSettings,
     private commandBus: ICommandBus,
     private logger: Logger,
   ) {}

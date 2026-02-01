@@ -62,6 +62,7 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
     private readonly ctxProvider: ClassContextProvider,
     private workerConfig?: Partial<IWorkerConfig>,
     private rateLimitConfig?: IRateLimitConfig,
+    private ignoredSagas?: string[]
   ) {}
 
   /**
@@ -315,12 +316,11 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
   }
 
   /**
-   * Check if a saga should be ignored (via environment variable).
+   * Check if a saga should be ignored
    */
   private shouldIgnoreSaga(sagaName: string): boolean {
-    if (process.env.IGNORE_SAGAS) {
-      const ignorableSagas = process.env.IGNORE_SAGAS.split(",").map(s => s.trim())
-      return ignorableSagas.includes(sagaName)
+    if (this.ignoredSagas?.length) {
+      return this.ignoredSagas.includes(sagaName)
     }
     return false
   }
@@ -337,6 +337,7 @@ export function createOutboxEventBus(
   ctxProvider: ClassContextProvider,
   workerConfig?: Partial<IWorkerConfig>,
   rateLimitConfig?: IRateLimitConfig,
+  ignoredSagas?: string[]
 ): OutboxEventBus {
-  return new OutboxEventBus(logger, eventStore, db, pool, ctxProvider, workerConfig, rateLimitConfig)
+  return new OutboxEventBus(logger, eventStore, db, pool, ctxProvider, workerConfig, rateLimitConfig, ignoredSagas)
 }

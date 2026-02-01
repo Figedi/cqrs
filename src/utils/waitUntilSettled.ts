@@ -10,7 +10,6 @@ export const createWaitUntilSettled =
       return
     }
     const process = async () => {
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         const events = await eventStore.findByStreamIds(streamIds, ["status"])
         if (!events.length) {

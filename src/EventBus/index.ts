@@ -1,5 +1,5 @@
 import type { IEventStore, IRateLimitConfig, IWorkerConfig } from "../infrastructure/types.js"
-import type { ClassContextProvider, IEventBus, IPersistenceSettings, IPostgresSettings, Logger } from "../types.js"
+import type { ClassContextProvider, IEventBus, IInitializedPostgresSettings, IPersistenceSettings, Logger } from "../types.js"
 import { InMemoryEventBus } from "./InMemoryEventBus.js"
 import { createOutboxEventBus, OutboxEventBus } from "./OutboxEventBus.js"
 
@@ -7,6 +7,7 @@ export { OutboxEventBus, createOutboxEventBus }
 export { InMemoryEventBus }
 
 export interface IOutboxEventBusOptions {
+  ignoredSagas?: string[]
   workerConfig?: Partial<IWorkerConfig>
   rateLimitConfig?: IRateLimitConfig
 }
@@ -29,18 +30,18 @@ export const createEventBus = (
   outboxOpts?: IOutboxEventBusOptions,
 ): IEventBus => {
   if (opts.type === "inmem") {
-    return new InMemoryEventBus(logger, ctxProvider)
+    return new InMemoryEventBus(logger, ctxProvider, outboxOpts?.ignoredSagas)
   }
 
-  const pgOpts = opts as IPostgresSettings
   // Use OutboxEventBus for persistent storage
   return createOutboxEventBus(
     logger,
     eventStore,
-    pgOpts.db,
-    pgOpts.pool,
+    (opts as IInitializedPostgresSettings).db,
+    (opts as IInitializedPostgresSettings).pool,
     ctxProvider,
     outboxOpts?.workerConfig,
     outboxOpts?.rateLimitConfig,
+    outboxOpts?.ignoredSagas,
   )
 }

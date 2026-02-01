@@ -29,6 +29,7 @@ export class InMemoryEventBus implements IEventBus {
   constructor(
     private readonly logger: Logger,
     private readonly ctxProvider: ClassContextProvider,
+    private readonly ignoredSagas?: string[]
   ) {}
 
   /**
@@ -42,7 +43,6 @@ export class InMemoryEventBus implements IEventBus {
    * Deserialize a persisted event back to an event instance.
    * Not supported for in-memory bus as there's no persistent storage.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   deserializeEvent(_event: IPersistedEvent): IEvent {
     throw new ApplicationError("deserializeEvent not supported for InMemoryEventBus")
   }
@@ -96,13 +96,9 @@ export class InMemoryEventBus implements IEventBus {
     return this.out$
   }
 
-  /**
-   * Check if a saga should be ignored (via environment variable).
-   */
   private shouldIgnoreSaga(sagaName: string): boolean {
-    if (process.env.IGNORE_SAGAS) {
-      const ignorableSagas = process.env.IGNORE_SAGAS.split(",").map(s => s.trim())
-      return ignorableSagas.includes(sagaName)
+    if (this.ignoredSagas?.length) {
+      return this.ignoredSagas.includes(sagaName)
     }
     return false
   }

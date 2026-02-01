@@ -9,7 +9,6 @@ export const createWaitUntilIdle =
     const findUnprocessedCommands = () => eventStore.findUnprocessedCommands(undefined, ["eventId"])
 
     const process = async () => {
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         const events = await findUnprocessedCommands()
         if (!events.length) {

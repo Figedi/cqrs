@@ -66,16 +66,20 @@ export interface IInmemorySettings {
 }
 export interface IPostgresSettings {
   type: "pg"
-  db: KyselyDb
-  pool: Pool // Keep for LISTEN/NOTIFY (Kysely doesn't support it)
+  driver: string | { db: KyselyDb; pool: Pool }
   runMigrations?: boolean
   options?: Record<string, any>
+}
+export interface IInitializedPostgresSettings extends IPostgresSettings {
+  db: KyselyDb; 
+  pool: Pool
 }
 
 export type IPersistenceSettings = IInmemorySettings | IPostgresSettings
 
 /** Configuration for the outbox pattern (optional, enables OutboxCommandBus/OutboxEventBus) */
 export interface IOutboxSettings {
+  ignoredSagas?: string[]
   /** Enable the outbox pattern (default: false for backward compatibility) */
   enabled: boolean
   /** Worker configuration */

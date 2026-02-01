@@ -125,7 +125,6 @@ export class InMemoryCommandBus implements ICommandBus {
    * Deserialize a persisted event back to a command instance.
    * Not supported for in-memory bus as there's no persistent storage.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   deserializeCommand(_event: IPersistedEvent): ICommand {
     throw new ApplicationError("deserializeCommand not supported for InMemoryCommandBus")
   }

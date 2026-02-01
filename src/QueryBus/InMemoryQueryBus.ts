@@ -18,7 +18,6 @@ export class InMemoryQueryBus extends BaseQueryBus implements IQueryBus {
       throw error
     }
     const eventId = query.meta?.eventId || opts?.eventId || uuid()
-    // eslint-disable-next-line no-param-reassign
     query.meta = { ...query.meta, eventId }
 
     try {

@@ -29,7 +29,6 @@ export class PersistentQueryBus extends BaseQueryBus implements IQueryBus {
     const streamId = query.meta?.streamId || opts?.streamId || eventId
     const transient = query.meta?.transient || opts?.transient
     const now = new Date()
-    // eslint-disable-next-line no-param-reassign
     query.meta = { ...query.meta, eventId }
 
     if (transient) {

@@ -250,8 +250,7 @@ describe("cqrsModule", () => {
       const CQRS_OPTIONS: ICQRSSettings = {
         transaction: txSettings,
         persistence: {
-          db,
-          pool,
+          driver: { db, pool },
           type: "pg",
           runMigrations: true,
           options: {
