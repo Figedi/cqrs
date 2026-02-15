@@ -89,7 +89,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
   /**
    * Initialize and start the command bus.
    */
-  async startup(): Promise<void> {
+  async preflight(): Promise<void> {
     // Create polling worker
     this.pollingWorker = createPollingWorker(
       this.db,

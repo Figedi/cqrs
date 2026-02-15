@@ -70,6 +70,13 @@ export interface IPostgresSettings {
   runMigrations?: boolean
   options?: Record<string, any>
 }
+
+/**
+ * Postgres settings with initialized database connection and pool.
+ * Used internally after adapter creation.
+ * 
+ * @internal
+ */
 export interface IInitializedPostgresSettings extends IPostgresSettings {
   db: KyselyDb; 
   pool: Pool

@@ -68,7 +68,7 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
   /**
    * Initialize and start the event bus.
    */
-  async startup(): Promise<void> {
+  async preflight(): Promise<void> {
     // Create polling worker for EVENT type
     this.pollingWorker = createPollingWorker(
       this.db,

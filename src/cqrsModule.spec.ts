@@ -278,10 +278,8 @@ describe("cqrsModule", () => {
       } catch {
         // Tables don't exist yet, that's fine - preflight will create them
       }
-      // Preflight creates tables if needed
+      // Preflight creates tables, initializes workers and stream controllers
       await cqrsModule.preflight()
-      // Startup initializes workers and stream controllers
-      await cqrsModule.startup()
     })
 
     afterEach(async () => {
@@ -295,7 +293,7 @@ describe("cqrsModule", () => {
     describe.skip("EventScheduler", () => {
       const now = Date.now()
       beforeEach(() => {
-        // Note: don't use shouldClearNativeTimers as it clears polling timers from startup()
+        // Note: don't use shouldClearNativeTimers as it clears polling timers from preflight()
         vi.useFakeTimers({ now })
       })
 

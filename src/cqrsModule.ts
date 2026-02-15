@@ -112,6 +112,11 @@ export class CQRSModule {
     return this.eventStore.findByStreamIds(params.streamIds!, undefined, params.type)
   }
 
+  /**
+   * Initialize the CQRS module.
+   * Creates tables, runs migrations, starts outbox polling workers, etc.
+   * Must be called after registering all handlers.
+   */
   public async preflight(): Promise<void> {
     if ("preflight" in this.eventStore) {
       await (this.eventStore as any).preflight()
@@ -122,19 +127,11 @@ export class CQRSModule {
     if ("preflight" in this.timeBasedEventScheduler) {
       await (this.timeBasedEventScheduler as any).preflight()
     }
-  }
-
-  /**
-   * Start the CQRS module workers.
-   * For outbox-enabled buses, this starts the polling workers.
-   * Must be called after preflight() and after registering all handlers.
-   */
-  public async startup(): Promise<void> {
-    if ("startup" in this.commandBus) {
-      await (this.commandBus as any).startup()
+    if ("preflight" in this.commandBus) {
+      await (this.commandBus as any).preflight()
     }
-    if ("startup" in this.eventBus) {
-      await (this.eventBus as any).startup()
+    if ("preflight" in this.eventBus) {
+      await (this.eventBus as any).preflight()
     }
   }
 
