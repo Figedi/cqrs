@@ -1,7 +1,6 @@
 import type { Left } from "fp-ts/lib/Either.js"
 import { isLeft, left, right } from "fp-ts/lib/Either.js"
 import type { Transaction } from "kysely"
-import type { Pool } from "pg"
 import { Observable } from "rxjs"
 import { serializeError } from "serialize-error"
 import { v4 as uuid } from "uuid"
@@ -13,7 +12,7 @@ import {
   NoHandlerFoundError,
   TimeoutExceededError,
 } from "../errors.js"
-import type { Database, KyselyDb } from "../infrastructure/db/index.js"
+import type { Database, IDbAdapter, KyselyDb } from "../infrastructure/db/index.js"
 import type { PollingWorker } from "../infrastructure/PollingWorker.js"
 import type { EventStatus, IEventStore, IPersistedEvent } from "../infrastructure/types.js"
 import {
@@ -74,8 +73,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
   constructor(
     private logger: Logger,
     private eventStore: IEventStore,
-    private db: KyselyDb,
-    private pool: Pool,
+    private adapter: IDbAdapter,
     private sharedWorker: PollingWorker,
   ) {}
 
@@ -174,7 +172,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
 
     // Transient commands bypass persistence
     if (transient) {
-      const result = await this.processCommandDirectly(command, opts?.scope || this.db)
+      const result = await this.processCommandDirectly(command, opts?.scope || this.adapter.db)
       if (isLeft(result)) {
         return left(result.left) as TRes
       }
@@ -221,7 +219,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
 
     // Transient commands bypass outbox - execute directly and return result
     if (transient) {
-      const result = await this.processCommandDirectly(command, opts?.scope || this.db)
+      const result = await this.processCommandDirectly(command, opts?.scope || this.adapter.db)
       return result as TRes
     }
 
@@ -517,8 +515,7 @@ export function createOutboxCommandBus(
   logger: Logger,
   eventStore: IEventStore,
   db: KyselyDb,
-  pool: Pool,
   sharedWorker: PollingWorker,
 ): OutboxCommandBus {
-  return new OutboxCommandBus(logger, eventStore, db, pool, sharedWorker)
+  return new OutboxCommandBus(logger, eventStore, db, sharedWorker)
 }

@@ -19,7 +19,7 @@ import {
 } from "./common.js"
 import { CQRSModule } from "./cqrsModule.js"
 import { RetriesExceededError } from "./errors.js"
-import { createPGliteAdapter, type IDbAdapter, type IDbClient, type PGliteTestAdapter } from "./test/pgliteAdapter.js"
+import { type PGliteDbAdapter } from "./infrastructure/db/index.js"
 import type {
   Constructor,
   HandlerContext,
@@ -100,7 +100,7 @@ const assertWithRetries = async (fn: () => Promise<void>, retries = 3, sleepBetw
 }
 
 const executeAndWaitForPersistentCommand = async <T, TRes extends VoidEither>(
-  adapter: IDbAdapter,
+  adapter: PGliteDbAdapter,
   commandBus: ICommandBus,
   command: ICommand<T, TRes>,
 ) => {
@@ -198,88 +198,38 @@ describe("cqrsModule", () => {
 
   const ID = "42"
 
-  describe.skip("persistence mode = inmem", () => {
-    describe("core behaviour", () => {
-      let cqrsModule: CQRSModule
-
-      beforeEach(async () => {
-        cqrsModule = new CQRSModule({ transaction: txSettings, persistence: { type: "inmem" } }, logger)
-      })
-
-      it("should accept commands", async () => {
-        const cmdCb = vi.fn()
-        const ExampleCommandHandler = createExampleCommandHandler(cmdCb)
-        cqrsModule.commandBus.register(new ExampleCommandHandler())
-        const commandPayload = { id: ID, type: "command" }
-        await executeAndWaitForInmemoryCommand(cqrsModule.commandBus, new ExampleCommand(commandPayload))
-        expect(cmdCb).toHaveBeenCalledOnce()
-        expect(cmdCb).toHaveBeenCalledWith(commandPayload, expect.anything())
-      })
-
-      it("should accept queries", async () => {
-        const cmdCb = vi.fn()
-        const ExampleQueryHandler = createExampleQueryHandler(cmdCb)
-        cqrsModule.queryBus.register(new ExampleQueryHandler())
-        const queryPayload = { id: ID, type: "command" }
-        const result = await cqrsModule.queryBus.execute(new ExampleQuery(queryPayload))
-
-        expect(isRight(result)).to.equal(true)
-        expect(cmdCb).toHaveBeenCalledOnce()
-        expect(cmdCb).toHaveBeenCalledWith(queryPayload)
-        expect((result as Right<{ id: string; result: number }>).right.result).to.equal(+ID * 2)
-      })
-
-      it("should accept events", async () => {
-        const result = await cqrsModule.eventBus.execute(new ExampleEvent({ id: ID, type: "event" }))
-
-        expect(isRight(result)).to.equal(true)
-      })
-    })
-  })
-
-  describe("persistence mode = pg (PGlite)", () => {
-    let adapter: PGliteTestAdapter
-    let client: IDbClient
+  describe("persistence mode = pglite", () => {
+    let adapter: PGliteDbAdapter
+    let client: Awaited<ReturnType<PGliteDbAdapter["connect"]>>
 
     let cqrsModule: CQRSModule
 
-    beforeAll(async () => {
-      adapter = createPGliteAdapter()
-      const db = await adapter.getDb()
-      const pool = await adapter.getPool()
+    beforeAll(() => {
       const CQRS_OPTIONS: ICQRSSettings = {
         transaction: txSettings,
         persistence: {
-          driver: { db, pool },
-          type: "pg",
+          type: "pglite",
           runMigrations: true,
-          options: {
-            max: 50,
-          },
         },
-        // Use faster polling for tests
         outbox: {
           enabled: true,
-          worker: {
-            pollIntervalMs: 100, // Fast polling for tests
-          },
+          worker: { pollIntervalMs: 100 },
         },
       }
-      cqrsModule = new CQRSModule(CQRS_OPTIONS as ICQRSSettings, logger)
+      cqrsModule = new CQRSModule(CQRS_OPTIONS, logger)
     })
 
     beforeEach(async () => {
+      // Preflight creates pglite adapter, tables, workers. Then get adapter for raw queries.
+      await cqrsModule.preflight()
+      adapter = cqrsModule.getDbAdapter() as PGliteDbAdapter
       client = await adapter.connect()
-      // Truncate tables before preflight if they exist (to clear stale data)
-      // This handles the case where tables exist from a previous test run
       try {
         await client.query("TRUNCATE TABLE events RESTART IDENTITY CASCADE")
         await client.query("TRUNCATE TABLE scheduled_events RESTART IDENTITY CASCADE")
       } catch {
-        // Tables don't exist yet, that's fine - preflight will create them
+        // Tables don't exist yet
       }
-      // Preflight creates tables, initializes workers and stream controllers
-      await cqrsModule.preflight()
     })
 
     afterEach(async () => {
@@ -664,6 +614,36 @@ describe("cqrsModule", () => {
             expect(commands[0].status).to.equal("PROCESSED")
           },
           20, // More retries for complex async flow
+          100,
+        )
+      })
+
+      it("shared PollingWorker processes both EVENT and COMMAND (outbox integration)", async () => {
+        /**
+         * Verifies the single shared worker handles both event types in one flow.
+         * Command triggers event via handler -> both COMMAND and EVENT processed by shared worker.
+         */
+        const cmdCb = vi.fn()
+        const ExampleCommandHandler = createExampleCommandHandler(cmdCb)
+        cqrsModule.commandBus.register(new ExampleCommandHandler())
+        const cmdPayload = { id: ID, type: "command" }
+
+        await executeAndWaitForPersistentCommand(adapter, cqrsModule.commandBus, new ExampleCommand(cmdPayload))
+
+        expect(cmdCb).toHaveBeenCalledOnce()
+        expect(cmdCb).toHaveBeenCalledWith(cmdPayload, expect.anything())
+
+        await assertWithRetries(
+          async () => {
+            const { rows } = await adapter.query<any>(
+              `SELECT type, status FROM events ORDER BY type`,
+            )
+            expect(rows).to.have.lengthOf(2)
+            const byType = Object.fromEntries(rows.map((r: any) => [r.type, r.status]))
+            expect(byType.COMMAND).to.equal("PROCESSED")
+            expect(byType.EVENT).to.equal("PROCESSED")
+          },
+          15,
           100,
         )
       })

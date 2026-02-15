@@ -1,5 +1,4 @@
 import { left, right } from "fp-ts/lib/Either.js"
-import type { Pool } from "pg"
 import type { Subscription } from "rxjs"
 import { type Observable, Subject } from "rxjs"
 import { share } from "rxjs/operators"
@@ -7,7 +6,6 @@ import { serializeError } from "serialize-error"
 import { v4 as uuid } from "uuid"
 import { deserializeEvent, serializeEvent } from "../common.js"
 import { ApplicationError } from "../errors.js"
-import type { KyselyDb } from "../infrastructure/db/index.js"
 import type { PollingWorker } from "../infrastructure/PollingWorker.js"
 import type { EventStatus, IEventStore, IPersistedEvent } from "../infrastructure/types.js"
 import {
@@ -51,8 +49,6 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
   constructor(
     private readonly logger: Logger,
     private readonly eventStore: IEventStore,
-    private readonly db: KyselyDb,
-    private readonly pool: Pool,
     private readonly ctxProvider: ClassContextProvider,
     private sharedWorker: PollingWorker,
     private ignoredSagas?: string[],
@@ -305,19 +301,4 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
     }
     return false
   }
-}
-
-/**
- * Create an OutboxEventBus instance.
- */
-export function createOutboxEventBus(
-  logger: Logger,
-  eventStore: IEventStore,
-  db: KyselyDb,
-  pool: Pool,
-  ctxProvider: ClassContextProvider,
-  sharedWorker: PollingWorker,
-  ignoredSagas?: string[],
-): OutboxEventBus {
-  return new OutboxEventBus(logger, eventStore, db, pool, ctxProvider, sharedWorker, ignoredSagas)
 }

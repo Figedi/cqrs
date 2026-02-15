@@ -3,15 +3,13 @@ import { deserializeEvent, serializeEvent } from "../common.js"
 import type {
   AnyEither,
   ICommand,
-  ICommandBus,
-  IInitializedPostgresSettings,
-  IInmemorySettings, ISerializedEvent,
+  ICommandBus, IPersistenceSettings, ISerializedEvent,
   Logger,
   ScheduledEventStatus,
   ServiceWithLifecycleHandlers,
   StringEither
 } from "../types.js"
-import type { KyselyDb } from "./db/index.js"
+import type { IDbAdapter } from "./db/index.js"
 import { runScheduledEventsMigration } from "./db/index.js"
 import type { IEventScheduler, IScheduleOptions } from "./types.js"
 
@@ -19,14 +17,12 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
   private schedules: Record<string, NodeJS.Timeout> = {}
 
   constructor(
-    private opts: IInitializedPostgresSettings,
+    private opts: IPersistenceSettings,
     private commandBus: ICommandBus,
     private logger: Logger,
+    private adapter: IDbAdapter,
   ) {}
 
-  private get db(): KyselyDb {
-    return this.opts.db
-  }
 
   private onCommandExecute =
     <TRes extends AnyEither>(
@@ -74,7 +70,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
       throw new Error(`ScheduledEvent for passed command w/ eventId ${eventId} already exists, refusing to schedule it`)
     }
 
-    const result = await this.db
+    const result = await this.adapter.db
       .insertInto("scheduledEvents")
       .values({
         scheduledEventId: eventId,
@@ -104,7 +100,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
       throw new Error("Passed command does not have an eventId, refusing to schedule it")
     }
 
-    await this.db.updateTable("scheduledEvents").set({ status }).where("scheduledEventId", "=", eventId).execute()
+    await this.adapter.db.updateTable("scheduledEvents").set({ status }).where("scheduledEventId", "=", eventId).execute()
 
     const timer = this.schedules[eventId]
     if (status !== "CREATED" && timer) {
@@ -114,7 +110,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
   }
 
   public async reset(): Promise<number> {
-    const result = await this.db
+    const result = await this.adapter.db
       .updateTable("scheduledEvents")
       .set({ status: "CREATED" })
       .where("status", "=", "ABORTED")
@@ -128,10 +124,10 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
 
   public async preflight(): Promise<void> {
     if (this.opts.runMigrations) {
-      await runScheduledEventsMigration(this.db)
+      await runScheduledEventsMigration(this.adapter.db)
     }
 
-    const eventSchedules = await this.db
+    const eventSchedules = await this.adapter.db
       .selectFrom("scheduledEvents")
       .selectAll()
       .where("status", "=", "CREATED")
@@ -174,94 +170,3 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
   }
 }
 
-export class InMemoryEventScheduler implements IEventScheduler, ServiceWithLifecycleHandlers {
-  private schedules: Record<string, NodeJS.Timeout> = {}
-
-  constructor(
-    _opts: IInmemorySettings,
-    private commandBus: ICommandBus,
-    private logger: Logger,
-  ) {}
-
-  private onCommandExecute =
-    <TRes extends AnyEither>(
-      command: ICommand<any, TRes>,
-      onExecute?: (result: TRes | StringEither) => Promise<void> | void,
-      executeOpts?: IScheduleOptions,
-    ) =>
-    async (): Promise<void> => {
-      const eventId = command.meta.eventId!
-      let result: TRes | StringEither
-      try {
-        if (executeOpts?.executeSync) {
-          result = await this.commandBus.executeSync(command, executeOpts)
-        } else {
-          result = await this.commandBus.execute(command, executeOpts)
-        }
-        onExecute?.(result)
-      } finally {
-        clearTimeout(this.schedules[eventId])
-      }
-    }
-
-  public async scheduleCommand<TPayload extends Record<string, any>, TRes extends AnyEither>(
-    command: ICommand<TPayload, TRes>,
-    executeAt: Date,
-    onExecute?: (result: TRes | StringEither) => Promise<void> | void,
-    executeOpts?: IScheduleOptions,
-  ): Promise<string> {
-    const now = Date.now()
-    const scheduleTime = executeAt.getTime() - now
-
-    if (scheduleTime < 0) {
-      throw new Error(`Cannot schedule events in the past, you passed executeAt = ${executeAt.toISOString()}`)
-    }
-    const eventId = command.meta.eventId
-
-    if (!eventId) {
-      throw new Error("Passed command does not have an eventId, refusing to schedule it")
-    }
-
-    if (this.schedules[eventId]) {
-      throw new Error(`ScheduledEvent for passed command w/ eventId ${eventId} already exists, refusing to schedule it`)
-    }
-
-    const timer = setTimeout(this.onCommandExecute(command, onExecute, executeOpts), scheduleTime)
-    timer.unref()
-    this.schedules[eventId] = timer
-
-    this.logger.debug(
-      { command },
-      `Scheduled event w/ eventId ${eventId}, execution time will be at ${executeAt.toISOString()}`,
-    )
-
-    return eventId
-  }
-
-  public async updateScheduledEventStatus(command: ICommand, status: ScheduledEventStatus): Promise<void> {
-    const eventId = command.meta.eventId
-
-    if (!eventId) {
-      throw new Error("Passed command does not have an eventId, refusing to schedule it")
-    }
-    const timer = this.schedules[eventId]
-    if (!timer) {
-      throw new Error(`ScheduledEvent by eventId: ${eventId} does not exist, cannot update`)
-    }
-    if (status !== "CREATED") {
-      clearTimeout(timer)
-      delete this.schedules[eventId]
-    }
-  }
-
-  public async reset(): Promise<number> {
-    Object.values(this.schedules).forEach(clearTimeout)
-    const scheduleLength = Object.keys(this.schedules).length
-    this.schedules = {}
-    return scheduleLength
-  }
-
-  public async preflight(): Promise<void> {
-    // nothing to do here in the inmem version
-  }
-}

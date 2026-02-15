@@ -2,7 +2,7 @@ import { isLeft, left } from "fp-ts/lib/Either.js"
 import { random } from "lodash-es"
 import { isCommandHandler, mergeObjectContext, mergeWithParentCommand } from "../common.js"
 import { TxTimeoutError } from "../errors.js"
-import type { IsolationLevel, KyselyDb } from "../infrastructure/db/index.js"
+import type { IDbAdapter, IsolationLevel } from "../infrastructure/db/index.js"
 import { IsolationLevels, isTransaction } from "../infrastructure/db/index.js"
 import type {
   AnyEither,
@@ -37,7 +37,7 @@ export class UowDecorator implements IDecorator {
   constructor(
     private txSettings: UowTxSettings,
     private ctxProvider: ClassContextProvider,
-    private db: KyselyDb,
+    private adapter: IDbAdapter,
   ) {}
 
   private async maybePublishCommandEvents<TPayload extends ICommand, TRes extends AnyEither>(
@@ -177,7 +177,7 @@ export class UowDecorator implements IDecorator {
           }
 
           // Otherwise, start a new transaction
-          return await this.db
+          return await this.adapter.db
             .transaction()
             .setIsolationLevel(isolationLevel)
             .execute(async trx => executeInTransaction(trx))

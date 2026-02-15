@@ -1,28 +1,25 @@
 import type { Transaction } from "kysely"
-import type { IInitializedPostgresSettings } from "../types.js"
-import type { Database, KyselyDb } from "./db/index.js"
+import type { Database, IDbAdapter } from "./db/index.js"
 import { runEventsMigration } from "./db/index.js"
 import type { EventTypes, IEventStore, IPersistedEvent } from "./types.js"
+import { IPersistenceSettings } from "../types.js"
 
 export class PersistentEventStore implements IEventStore {
-  constructor(private opts: IInitializedPostgresSettings) {}
+  constructor(private opts: IPersistenceSettings, private adapter: IDbAdapter) {}
 
-  private get db(): KyselyDb {
-    return this.opts.db
-  }
-
+  
   public async preflight(): Promise<void> {
     if (!this.opts.runMigrations) {
       return
     }
-    await runEventsMigration(this.db)
+    await runEventsMigration(this.adapter.db)
   }
 
   public async insert(
     event: IPersistedEvent,
     { allowUpsert = false, scope }: { allowUpsert?: boolean; scope?: Transaction<Database> } = {},
   ): Promise<void> {
-    const db = scope ?? this.db
+    const db = scope ?? this.adapter.db
 
     const data = {
       eventId: event.eventId,
@@ -69,7 +66,7 @@ export class PersistentEventStore implements IEventStore {
       return []
     }
 
-    let qb = this.db.selectFrom("events").selectAll()
+    let qb = this.adapter.db.selectFrom("events").selectAll()
 
     if (query.eventId) qb = qb.where("eventId", "=", query.eventId)
     if (query.eventName) qb = qb.where("eventName", "=", query.eventName)
@@ -86,7 +83,7 @@ export class PersistentEventStore implements IEventStore {
     event: Partial<IPersistedEvent>,
     { scope }: { scope?: Transaction<Database> } = {},
   ): Promise<void> {
-    const db = scope ?? this.db
+    const db = scope ?? this.adapter.db
 
     const updateData: Record<string, unknown> = {}
 
@@ -118,7 +115,7 @@ export class PersistentEventStore implements IEventStore {
       return []
     }
 
-    let qb = this.db.selectFrom("events")
+    let qb = this.adapter.db.selectFrom("events")
 
     // Select specific fields or all
     if (fields?.length) {
@@ -141,7 +138,7 @@ export class PersistentEventStore implements IEventStore {
     ignoredEventIds?: string[],
     fields?: (keyof IPersistedEvent)[],
   ): Promise<IPersistedEvent[]> {
-    let qb = this.db.selectFrom("events")
+    let qb = this.adapter.db.selectFrom("events")
 
     // Select specific fields or all
     if (fields?.length) {
@@ -169,7 +166,7 @@ export class PersistentEventStore implements IEventStore {
       return []
     }
 
-    let qb = this.db.selectFrom("events")
+    let qb = this.adapter.db.selectFrom("events")
 
     // Select specific fields or all
     if (fields?.length) {

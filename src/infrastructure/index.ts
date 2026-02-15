@@ -1,7 +1,3 @@
-// Types
-
-export { createEventScheduler } from "./createEventScheduler.js"
-export { createEventStore } from "./createEventStore.js"
 // Event Scheduler
 export { PersistentEventScheduler } from "./PersistentEventScheduler.js"
 // Event Store

@@ -1,7 +1,6 @@
 import type { Either } from "fp-ts/lib/Either.js"
 import type { Option } from "fp-ts/lib/Option.js"
 import type { Transaction } from "kysely"
-import type { Pool } from "pg"
 import type { Observable } from "rxjs"
 import type { ErrorObject } from "serialize-error"
 import type { UowTxSettings } from "./decorators/UowDecorator.js"
@@ -61,28 +60,21 @@ export interface IEventMeta {
   transient?: boolean
 }
 
-export interface IInmemorySettings {
-  type: "inmem"
-}
 export interface IPostgresSettings {
   type: "pg"
-  driver: string | { db: KyselyDb; pool: Pool }
+  /** Connection string or a pre-built IDbAdapter instance. */
+  connectionString: string
   runMigrations?: boolean
   options?: Record<string, any>
 }
 
-/**
- * Postgres settings with initialized database connection and pool.
- * Used internally after adapter creation.
- * 
- * @internal
- */
-export interface IInitializedPostgresSettings extends IPostgresSettings {
-  db: KyselyDb; 
-  pool: Pool
+export interface IPgliteSettings {
+  type: "pglite"
+  runMigrations?: boolean
 }
 
-export type IPersistenceSettings = IInmemorySettings | IPostgresSettings
+
+export type IPersistenceSettings =  IPostgresSettings | IPgliteSettings
 
 /** Configuration for the outbox pattern (optional, enables OutboxCommandBus/OutboxEventBus) */
 export interface IOutboxSettings {

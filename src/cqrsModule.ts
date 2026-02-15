@@ -1,13 +1,8 @@
-import pg from "pg"
-import { createCommandBus } from "./CommandBus/index.js"
 import { LoggingDecorator } from "./decorators/LoggingDecorator.js"
 import { UowDecorator } from "./decorators/UowDecorator.js"
-import { createEventBus, IOutboxEventBusOptions } from "./EventBus/index.js"
 import { ApplicationError } from "./errors.js"
-import { createEventScheduler } from "./infrastructure/createEventScheduler.js"
-import { createEventStore } from "./infrastructure/createEventStore.js"
-import type { KyselyDb } from "./infrastructure/db/index.js"
-import { createKyselyFromPool } from "./infrastructure/db/index.js"
+import { createDbAdapter } from "./infrastructure/db/index.js"
+import type { IDbAdapter } from "./infrastructure/db/index.js"
 import { createPollingWorker } from "./infrastructure/PollingWorker.js"
 import type {
   EventTypes,
@@ -15,11 +10,23 @@ import type {
   IEventStore,
   IPersistedEvent
 } from "./infrastructure/types.js"
-import { createQuerybus } from "./QueryBus/index.js"
-import type { ICommandBus, ICQRSSettings, IEventBus, IInitializedPostgresSettings, IInmemorySettings, IPostgresSettings, IQueryBus, Logger } from "./types.js"
+import type {
+  ICommandBus,
+  ICQRSSettings,
+  IEventBus,
+  IPostgresSettings,
+  IQueryBus,
+  Logger,
+} from "./types.js"
+import { createPGliteAdapter } from "./infrastructure/db/index.js"
 import { TimeBasedEventScheduler } from "./utils/TimeBasedEventScheduler.js"
 import { createWaitUntilIdle } from "./utils/waitUntilIdle.js"
 import { createWaitUntilSettled } from "./utils/waitUntilSettled.js"
+import { PersistentEventStore } from "./infrastructure/PersistentEventStore.js"
+import { OutboxCommandBus } from "./CommandBus/OutboxCommandBus.js"
+import { PersistentQueryBus } from "./QueryBus/PersistentQueryBus.js"
+import { PersistentEventScheduler } from "./infrastructure/PersistentEventScheduler.js"
+import { OutboxEventBus } from "./EventBus/OutboxEventBus.js"
 
 export class CQRSModule {
   public timeBasedEventScheduler!: TimeBasedEventScheduler
@@ -28,83 +35,57 @@ export class CQRSModule {
 
   public waitUntilSettled!: ReturnType<typeof createWaitUntilSettled>
 
-  public commandBus!: ICommandBus
+  public commandBus?: ICommandBus
 
-  public eventBus!: IEventBus
+  public eventBus?: IEventBus
 
-  public queryBus!: IQueryBus
+  public queryBus?: IQueryBus
 
-  public eventScheduler!: IEventScheduler
+  public eventScheduler?: IEventScheduler
 
-  private eventStore!: IEventStore
+  private eventStore?: IEventStore
 
-  private pool!: pg.Pool
-
-  private db!: KyselyDb
+  private adapter?: IDbAdapter
 
   constructor(
     private settings: ICQRSSettings,
     private logger: Logger,
   ) {
-    this.init()
   }
 
-  private init() {
+
+  private wirePersistence(adapter: IDbAdapter): void {
     const ctxProvider = () => ({
-      queryBus: this.queryBus,
-      eventBus: this.eventBus,
-      commandBus: this.commandBus,
-    })
+      queryBus: this.queryBus!,
+      eventBus: this.eventBus!,
+      commandBus: this.commandBus!,
+    });
 
-    if (this.settings.persistence.type === "pg") {
-      // Use provided db/pool or create new ones
-      const pgSettings = this.settings.persistence as IPostgresSettings
-      if (typeof pgSettings.driver === 'string') {
-        this.pool = new pg.Pool({
-          connectionString: pgSettings.driver,
-          ...pgSettings.options,
-        })
-        this.db = createKyselyFromPool(this.pool)
-      } else {
-        this.db = pgSettings.driver.db
-        this.pool = pgSettings.driver.pool
-      }
-    }
+    const pollingWorker = createPollingWorker(
+      this.adapter!,
+      this.logger,
+      this.settings.outbox?.worker,
+      this.settings.outbox?.rateLimit,
+    );
 
-    // Build opts with db and pool for pg settings
-    const opts: IInitializedPostgresSettings | IInmemorySettings =
-      this.settings.persistence.type === "pg"
-        ? { ...this.settings.persistence, db: this.db, pool: this.pool }
-        : this.settings.persistence
-
-    // Prepare outbox options if enabled
-    const outboxOpts: IOutboxEventBusOptions | undefined =
-      this.settings.outbox?.enabled && this.settings.persistence.type === "pg"
-        ? {
-            workerConfig: this.settings.outbox.worker,
-            rateLimitConfig: this.settings.outbox.rateLimit,
-            ignoredSagas: this.settings.outbox.ignoredSagas,
-            sharedWorker: createPollingWorker(
-              this.db,
-              this.pool,
-              this.logger,
-              this.settings.outbox.worker,
-              this.settings.outbox.rateLimit,
-            ),
-          }
-        : undefined
-
-    this.eventStore = createEventStore(opts)
+    this.eventStore = new PersistentEventStore(this.settings.persistence, adapter)
     this.waitUntilIdle = createWaitUntilIdle(this.eventStore)
     this.waitUntilSettled = createWaitUntilSettled(this.eventStore)
-    this.commandBus = createCommandBus(opts, this.eventStore, this.logger, outboxOpts)
-    this.eventBus = createEventBus(opts, this.eventStore, ctxProvider, this.logger, outboxOpts)
-    this.queryBus = createQuerybus(opts, this.eventStore, this.logger)
+    this.commandBus = new OutboxCommandBus(this.logger, this.eventStore, adapter, pollingWorker)
+    this.eventBus = new OutboxEventBus(this.logger, this.eventStore, ctxProvider, pollingWorker, this.settings.outbox?.ignoredSagas)
+    this.queryBus = new PersistentQueryBus(this.logger, this.eventStore)
     this.commandBus.registerDecorator(new LoggingDecorator(this.logger))
-    this.commandBus.registerDecorator(new UowDecorator(this.settings.transaction, ctxProvider, this.db))
+    this.commandBus.registerDecorator(new UowDecorator(this.settings.transaction, ctxProvider, adapter))
     this.queryBus.registerDecorator(new LoggingDecorator(this.logger))
     this.timeBasedEventScheduler = new TimeBasedEventScheduler(this.eventBus, this.logger)
-    this.eventScheduler = createEventScheduler(opts, this.commandBus, this.logger)
+    this.eventScheduler = new PersistentEventScheduler(this.settings.persistence, this.commandBus, this.logger, adapter)
+  }
+
+  /**
+   * Returns the db adapter when persistence is pg or pglite and preflight() has run; undefined otherwise.
+   */
+  public getDbAdapter(): IDbAdapter | undefined {
+    return this.adapter
   }
 
   public async status(params: {
@@ -112,6 +93,9 @@ export class CQRSModule {
     streamIds?: string[]
     type?: EventTypes
   }): Promise<IPersistedEvent[]> {
+    if (!this.eventStore) {
+      throw new Error("Call preflight() first")
+    }
     if (!params.eventIds?.length && !params.streamIds?.length) {
       throw new ApplicationError("Need to provide at least one eventId or streamId to retrieve status")
     }
@@ -122,24 +106,34 @@ export class CQRSModule {
   }
 
   /**
-   * Initialize the CQRS module.
-   * Creates tables, runs migrations, starts outbox polling workers, etc.
-   * Must be called after registering all handlers.
+   * Initialize the CQRS module: wire adapter (pg/pglite) if not yet done, then run preflight on stores/buses.
+   * For pg and pglite, adapter is created and wired here; call preflight() before using the module.
    */
   public async preflight(): Promise<void> {
-    if ("preflight" in this.eventStore) {
+    const hasDb = this.settings.persistence.type === "pg" || this.settings.persistence.type === "pglite"
+    if (hasDb && !this.adapter) {
+      if (this.settings.persistence.type === "pg") {
+        const pgSettings = this.settings.persistence as IPostgresSettings
+        this.adapter = createDbAdapter(pgSettings.connectionString, pgSettings.options)
+      } else {
+        this.adapter = await createPGliteAdapter()
+      }
+      this.wirePersistence(this.adapter)
+    }
+
+    if (this.eventStore && "preflight" in this.eventStore) {
       await (this.eventStore as any).preflight()
     }
-    if ("preflight" in this.eventScheduler) {
+    if (this.eventScheduler && "preflight" in this.eventScheduler) {
       await (this.eventScheduler as any).preflight()
     }
-    if ("preflight" in this.timeBasedEventScheduler) {
+    if (this.timeBasedEventScheduler && "preflight" in this.timeBasedEventScheduler) {
       await (this.timeBasedEventScheduler as any).preflight()
     }
-    if ("preflight" in this.commandBus) {
+    if (this.commandBus && "preflight" in this.commandBus) {
       await (this.commandBus as any).preflight()
     }
-    if ("preflight" in this.eventBus) {
+    if (this.eventBus && "preflight" in this.eventBus) {
       await (this.eventBus as any).preflight()
     }
   }
@@ -149,13 +143,13 @@ export class CQRSModule {
    * For outbox-enabled buses, this stops the polling workers and waits for in-flight operations.
    */
   public async shutdown(): Promise<void> {
-    if ("shutdown" in this.commandBus) {
+    if (this.commandBus && "shutdown" in this.commandBus) {
       await (this.commandBus as any).shutdown()
     }
-    if ("shutdown" in this.eventBus) {
+    if (this.eventBus && "shutdown" in this.eventBus) {
       await (this.eventBus as any).shutdown()
     }
-    if ("shutdown" in this.timeBasedEventScheduler) {
+    if (this.timeBasedEventScheduler && "shutdown" in this.timeBasedEventScheduler) {
       await (this.timeBasedEventScheduler as any).shutdown()
     }
   }

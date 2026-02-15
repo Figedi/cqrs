@@ -71,11 +71,11 @@ function createMemoryLimiter(opts: { points: number; duration: number; keyPrefix
 /**
  * Creates a rate limiter for distributed rate limiting across workers.
  *
- * Uses rate-limiter-flexible with PostgreSQL (if a raw Pool is provided) or
- * in-memory storage (for IDbAdapter or non-pg backends).
+ * Uses rate-limiter-flexible with PostgreSQL (storeClient) or in-memory storage.
+ * When storeClient is a PGlite-backed mock pool (query() runs on PGlite), config.type === "pg" will store rate limit state in PGlite.
  * Supports both maxPerSecond (primary) and maxConcurrent (optional) limits.
  *
- * @param pool - PostgreSQL connection pool
+ * @param pool - PostgreSQL connection pool (or PGlite-compatible mock with query())
  * @param config - Rate limit configuration
  * @returns Rate limiter instance
  */
@@ -198,6 +198,21 @@ export async function createRateLimiter(pool: Pool, config?: Partial<IRateLimitC
       }
     },
   }
+}
+
+/**
+ * Creates an in-memory-only rate limiter (no PostgreSQL).
+ * Use for PGlite or when no shared store is needed.
+ */
+export async function createRateLimiterInMemory(
+  config?: Partial<IRateLimitConfig>,
+): Promise<IRateLimiter> {
+  const mergedConfig = {
+    ...DEFAULT_RATE_LIMIT_CONFIG,
+    ...config,
+    type: "in-memory" as const,
+  }
+  return createRateLimiter(null as unknown as Pool, mergedConfig)
 }
 
 /**

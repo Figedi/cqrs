@@ -1,11 +1,11 @@
 import { sql, type Transaction } from "kysely"
-import type { Pool, PoolClient } from "pg"
 import { v4 as uuid } from "uuid"
-import type { Logger } from "../types.js"
+import type { IDbAdapter } from "./db/index.js"
 import type { Database, KyselyDb } from "./db/index.js"
+import type { Logger } from "../types.js"
 import type { EventStatus, EventTypes, IPersistedEvent, IPollResult, IRateLimitConfig, IWorkerConfig } from "./types.js"
 import { calculateNextRetryAt, DEFAULT_RETRY_CONFIG, shouldAbort } from "./utils/backoff.js"
-import { createRateLimiter, type IRateLimiter, RateLimitExceededError } from "./utils/rateLimiter.js"
+import { type IRateLimiter, RateLimitExceededError } from "./utils/rateLimiter.js"
 
 /** Default worker configuration */
 export const DEFAULT_WORKER_CONFIG: IWorkerConfig = {
@@ -48,14 +48,12 @@ export class PollingWorker {
   private staleLockTimer?: ReturnType<typeof setInterval>
   private isRunning = false
   private isPolling = false // Guard to prevent overlapping poll cycles
-  private notifyClient?: PoolClient
   private notifyListeners = new Map<string, (status: EventStatus) => void>()
   private processors = new Map<EventTypes, IRegisteredProcessor>()
   private isInitialized = false
 
   constructor(
-    private db: KyselyDb,
-    private pool: Pool, // Keep for LISTEN/NOTIFY
+    private adapter: IDbAdapter,
     private logger: Logger,
     config?: Partial<IWorkerConfig>,
     private rateLimitConfig?: IRateLimitConfig,
@@ -74,16 +72,13 @@ export class PollingWorker {
 
   /**
    * Register a processor for an event type (COMMAND or EVENT).
-   * Must be called before start().
+   * Can be called before or after start() - supports frameworks with arbitrary preflight order.
    */
   registerProcessor(
     eventType: EventTypes,
     processor: EventProcessor,
     onCompletion?: CompletionCallback,
   ): void {
-    if (this.isRunning) {
-      throw new Error("Cannot register processor after worker has started")
-    }
     this.processors.set(eventType, { processor, onCompletion })
   }
 
@@ -99,7 +94,7 @@ export class PollingWorker {
 
     // Initialize rate limiter if configured
     if (this.rateLimitConfig?.maxPerSecond) {
-      this.rateLimiter = await createRateLimiter(this.pool, this.rateLimitConfig)
+      this.rateLimiter = await this.adapter.getRateLimiter(this.rateLimitConfig)
     }
 
     // Setup LISTEN/NOTIFY for executeSync
@@ -155,38 +150,44 @@ export class PollingWorker {
     }
 
     // Close NOTIFY listener
-    if (this.notifyClient) {
-      try {
-        await this.notifyClient.query("UNLISTEN cqrs_event_status")
-      } catch {
-        // Ignore errors during cleanup
-      }
-      this.notifyClient.release()
-      this.notifyClient = undefined
+    try {
+      await this.adapter.unlisten("cqrs_event_status")
+    } catch {
+      // Ignore errors during cleanup
     }
+    await this.adapter.releaseNotify()
 
     this.logger.info({ workerId: this.workerId }, "Polling worker stopped")
   }
 
   /**
    * Wait for a specific event to complete (for executeSync).
+   * Uses LISTEN/NOTIFY when available, with polling fallback for environments that lack it (e.g. PGlite).
    */
   async waitForCompletion(eventId: string, timeoutMs: number = 0): Promise<EventStatus> {
     return new Promise((resolve, reject) => {
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+      let pollInterval: ReturnType<typeof setInterval> | undefined
 
       const cleanup = () => {
         this.notifyListeners.delete(eventId)
         if (timeoutHandle) {
           clearTimeout(timeoutHandle)
+          timeoutHandle = undefined
+        }
+        if (pollInterval) {
+          clearInterval(pollInterval)
+          pollInterval = undefined
         }
       }
 
-      // Register listener
-      this.notifyListeners.set(eventId, status => {
+      const resolveWithCleanup = (status: EventStatus) => {
         cleanup()
         resolve(status)
-      })
+      }
+
+      // Register NOTIFY listener
+      this.notifyListeners.set(eventId, resolveWithCleanup)
 
       // Setup timeout
       if (timeoutMs > 0) {
@@ -196,12 +197,19 @@ export class PollingWorker {
         }, timeoutMs)
       }
 
-      // Check if already completed (race condition protection)
+      // Initial check (race condition protection)
       this.checkEventStatus(eventId).then(status => {
         if (status && ["PROCESSED", "FAILED", "ABORTED"].includes(status)) {
-          cleanup()
-          resolve(status)
+          resolveWithCleanup(status)
+          return
         }
+        // Polling fallback for environments without LISTEN/NOTIFY (e.g. PGlite)
+        pollInterval = setInterval(async () => {
+          const s = await this.checkEventStatus(eventId)
+          if (s && ["PROCESSED", "FAILED", "ABORTED"].includes(s)) {
+            resolveWithCleanup(s)
+          }
+        }, 50)
       })
     })
   }
@@ -483,12 +491,10 @@ export class PollingWorker {
    * Setup LISTEN/NOTIFY for executeSync.
    */
   private async setupNotifyListener(): Promise<void> {
-    this.notifyClient = await this.pool.connect()
-
-    this.notifyClient.on("notification", msg => {
-      if (msg.channel === "cqrs_event_status" && msg.payload) {
+    this.adapter.onNotification((channel, payload) => {
+      if (channel === "cqrs_event_status" && payload) {
         try {
-          const data = JSON.parse(msg.payload)
+          const data = JSON.parse(payload)
           const listener = this.notifyListeners.get(data.event_id)
           if (listener) {
             listener(data.status as EventStatus)
@@ -499,7 +505,11 @@ export class PollingWorker {
       }
     })
 
-    await this.notifyClient.query("LISTEN cqrs_event_status")
+    await this.adapter.listen("cqrs_event_status")
+  }
+
+  private get db(): KyselyDb {
+    return this.adapter.db
   }
 
   /**
@@ -517,11 +527,10 @@ export class PollingWorker {
  * Register processors for COMMAND and/or EVENT via registerProcessor() before calling start().
  */
 export function createPollingWorker(
-  db: KyselyDb,
-  pool: Pool,
+  adapter: IDbAdapter,
   logger: Logger,
   config?: Partial<IWorkerConfig>,
   rateLimitConfig?: IRateLimitConfig,
 ): PollingWorker {
-  return new PollingWorker(db, pool, logger, config, rateLimitConfig)
+  return new PollingWorker(adapter, logger, config, rateLimitConfig)
 }
