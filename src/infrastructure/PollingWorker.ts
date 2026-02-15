@@ -22,9 +22,16 @@ export type EventProcessor = (event: IPersistedEvent, trx: Transaction<Database>
 /** Callback for handling event completion (success or failure) */
 export type CompletionCallback = (event: IPersistedEvent, status: EventStatus, error?: Error) => void
 
+export interface IRegisteredProcessor {
+  processor: EventProcessor
+  onCompletion?: CompletionCallback
+}
+
 /**
  * PollingWorker handles the core polling mechanism for processing events
  * from the outbox table using FOR UPDATE SKIP LOCKED pattern.
+ *
+ * Supports multiple event types (COMMAND, EVENT) - register processors via registerProcessor().
  *
  * Features:
  * - Distributed job claiming with FOR UPDATE SKIP LOCKED
@@ -43,12 +50,13 @@ export class PollingWorker {
   private isPolling = false // Guard to prevent overlapping poll cycles
   private notifyClient?: PoolClient
   private notifyListeners = new Map<string, (status: EventStatus) => void>()
+  private processors = new Map<EventTypes, IRegisteredProcessor>()
+  private isInitialized = false
 
   constructor(
     private db: KyselyDb,
     private pool: Pool, // Keep for LISTEN/NOTIFY
     private logger: Logger,
-    private eventType: EventTypes,
     config?: Partial<IWorkerConfig>,
     private rateLimitConfig?: IRateLimitConfig,
   ) {
@@ -65,9 +73,30 @@ export class PollingWorker {
   }
 
   /**
+   * Register a processor for an event type (COMMAND or EVENT).
+   * Must be called before start().
+   */
+  registerProcessor(
+    eventType: EventTypes,
+    processor: EventProcessor,
+    onCompletion?: CompletionCallback,
+  ): void {
+    if (this.isRunning) {
+      throw new Error("Cannot register processor after worker has started")
+    }
+    this.processors.set(eventType, { processor, onCompletion })
+  }
+
+  /**
    * Initialize the worker (rate limiter, LISTEN/NOTIFY).
+   * Idempotent - safe to call multiple times.
    */
   async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      return
+    }
+    this.isInitialized = true
+
     // Initialize rate limiter if configured
     if (this.rateLimitConfig?.maxPerSecond) {
       this.rateLimiter = await createRateLimiter(this.pool, this.rateLimitConfig)
@@ -79,19 +108,24 @@ export class PollingWorker {
 
   /**
    * Start the polling worker.
+   * Uses processors registered via registerProcessor().
    */
-  async start(processor: EventProcessor, onCompletion?: CompletionCallback): Promise<void> {
+  async start(): Promise<void> {
     if (this.isRunning) {
       return
     }
+    if (this.processors.size === 0) {
+      throw new Error("No processors registered. Call registerProcessor() before start().")
+    }
     this.isRunning = true
 
-    this.logger.info({ workerId: this.workerId, eventType: this.eventType }, "Starting polling worker")
+    const eventTypes = Array.from(this.processors.keys())
+    this.logger.info({ workerId: this.workerId, eventTypes }, "Starting polling worker")
 
     // Start polling loop
     this.pollingTimer = setInterval(async () => {
       if (!this.isRunning) return
-      await this.pollAndProcess(processor, onCompletion)
+      await this.pollAndProcess()
     }, this.config.pollIntervalMs)
 
     // Start stale lock cleanup (every 30 seconds)
@@ -101,7 +135,7 @@ export class PollingWorker {
     }, 30000)
 
     // Initial poll
-    await this.pollAndProcess(processor, onCompletion)
+    await this.pollAndProcess()
   }
 
   /**
@@ -189,7 +223,7 @@ export class PollingWorker {
   /**
    * Poll for pending events and process them.
    */
-  private async pollAndProcess(processor: EventProcessor, onCompletion?: CompletionCallback): Promise<void> {
+  private async pollAndProcess(): Promise<void> {
     // Prevent overlapping poll cycles (important for single-connection databases like PGlite)
     if (this.isPolling) {
       return
@@ -199,11 +233,11 @@ export class PollingWorker {
     try {
       // Poll for FAILED events first (higher priority)
       const failedResult = await this.poll("FAILED")
-      await this.processBatch(failedResult.claimed, processor, onCompletion)
+      await this.processBatch(failedResult.claimed)
 
       // Then poll for CREATED events
       const createdResult = await this.poll("CREATED")
-      await this.processBatch(createdResult.claimed, processor, onCompletion)
+      await this.processBatch(createdResult.claimed)
     } catch (error) {
       this.logger.error({ error, workerId: this.workerId }, "Error during polling")
     } finally {
@@ -216,13 +250,18 @@ export class PollingWorker {
    * This ensures distributed workers can safely claim events without conflicts.
    */
   private async poll(status: "CREATED" | "FAILED"): Promise<IPollResult> {
+    const eventTypes = Array.from(this.processors.keys())
+    if (eventTypes.length === 0) {
+      return { claimed: [], hasMore: false }
+    }
+
     return await this.db.transaction().execute(async trx => {
       // SELECT with FOR UPDATE SKIP LOCKED to atomically claim rows
       const selected = await trx
         .selectFrom("events")
         .select("eventId")
         .where("status", "=", status)
-        .where("type", "=", this.eventType)
+        .where("type", "in", eventTypes)
         .limit(this.config.batchSize)
         .forUpdate()
         .skipLocked()
@@ -263,25 +302,24 @@ export class PollingWorker {
   /**
    * Process a batch of claimed events.
    */
-  private async processBatch(
-    events: IPersistedEvent[],
-    processor: EventProcessor,
-    onCompletion?: CompletionCallback,
-  ): Promise<void> {
+  private async processBatch(events: IPersistedEvent[]): Promise<void> {
     for (const event of events) {
-      await this.processEvent(event, processor, onCompletion)
+      await this.processEvent(event)
     }
   }
 
   /**
    * Process a single event with rate limiting and error handling.
    */
-  private async processEvent(
-    event: IPersistedEvent,
-    processor: EventProcessor,
-    onCompletion?: CompletionCallback,
-  ): Promise<void> {
-    const rateLimitKey = `${this.eventType}:${event.eventName}`
+  private async processEvent(event: IPersistedEvent): Promise<void> {
+    const registered = this.processors.get(event.type as EventTypes)
+    if (!registered) {
+      this.logger.warn({ eventId: event.eventId, type: event.type }, "No processor for event type, skipping")
+      return
+    }
+
+    const { processor, onCompletion } = registered
+    const rateLimitKey = `${event.type}:${event.eventName}`
 
     // Apply rate limiting
     if (this.rateLimiter) {
@@ -475,15 +513,15 @@ export class PollingWorker {
 }
 
 /**
- * Create a new PollingWorker instance.
+ * Create a new shared PollingWorker instance.
+ * Register processors for COMMAND and/or EVENT via registerProcessor() before calling start().
  */
 export function createPollingWorker(
   db: KyselyDb,
   pool: Pool,
   logger: Logger,
-  eventType: EventTypes,
   config?: Partial<IWorkerConfig>,
   rateLimitConfig?: IRateLimitConfig,
 ): PollingWorker {
-  return new PollingWorker(db, pool, logger, eventType, config, rateLimitConfig)
+  return new PollingWorker(db, pool, logger, config, rateLimitConfig)
 }

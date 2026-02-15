@@ -14,14 +14,8 @@ import {
   TimeoutExceededError,
 } from "../errors.js"
 import type { Database, KyselyDb } from "../infrastructure/db/index.js"
-import { createPollingWorker, type PollingWorker } from "../infrastructure/PollingWorker.js"
-import type {
-  EventStatus,
-  IEventStore,
-  IPersistedEvent,
-  IRateLimitConfig,
-  IWorkerConfig,
-} from "../infrastructure/types.js"
+import type { PollingWorker } from "../infrastructure/PollingWorker.js"
+import type { EventStatus, IEventStore, IPersistedEvent } from "../infrastructure/types.js"
 import {
   createStreamController,
   type IStreamEvent,
@@ -82,45 +76,31 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
     private eventStore: IEventStore,
     private db: KyselyDb,
     private pool: Pool,
-    private workerConfig?: Partial<IWorkerConfig>,
-    private rateLimitConfig?: IRateLimitConfig,
+    private sharedWorker: PollingWorker,
   ) {}
 
   /**
    * Initialize and start the command bus.
    */
   async preflight(): Promise<void> {
-    // Create polling worker
-    this.pollingWorker = createPollingWorker(
-      this.db,
-      this.pool,
-      this.logger,
+    this.pollingWorker = this.sharedWorker
+    this.pollingWorker.registerProcessor(
       "COMMAND",
-      this.workerConfig,
-      this.rateLimitConfig,
-    )
-
-    await this.pollingWorker.initialize()
-
-    // Create stream controller for streaming API
-    this.streamController = createStreamController()
-
-    // Start polling
-    await this.pollingWorker.start(
       async (event, client) => this.processEvent(event, client),
       (event, status, error) => this.onEventCompletion(event, status, error),
     )
+    // Worker initialized/started by EventBus (preflights after CommandBus)
+
+    this.streamController = createStreamController()
 
     this.logger.info("OutboxCommandBus started")
   }
 
   /**
    * Shutdown the command bus gracefully.
+   * Only closes stream controller; shared worker is stopped by EventBus.
    */
   async shutdown(): Promise<void> {
-    if (this.pollingWorker) {
-      await this.pollingWorker.stop()
-    }
     if (this.streamController) {
       this.streamController.close()
     }
@@ -194,7 +174,10 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
 
     // Transient commands bypass persistence
     if (transient) {
-      await this.processCommandDirectly(command, opts?.scope || this.db)
+      const result = await this.processCommandDirectly(command, opts?.scope || this.db)
+      if (isLeft(result)) {
+        return left(result.left) as TRes
+      }
       return right(streamId) as TRes
     }
 
@@ -234,6 +217,14 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
     command: ICommand<T, TCommandRes>,
     opts?: ExecuteOpts,
   ): Promise<TRes> {
+    const transient = command.meta?.transient || opts?.transient
+
+    // Transient commands bypass outbox - execute directly and return result
+    if (transient) {
+      const result = await this.processCommandDirectly(command, opts?.scope || this.db)
+      return result as TRes
+    }
+
     const executeResult = await this.execute(command, opts)
     if (isLeft(executeResult)) {
       return executeResult as TRes
@@ -465,7 +456,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
   /**
    * Process a transient command directly (bypasses outbox).
    */
-  private async processCommandDirectly(command: ICommand, scope: ITransactionalScope): Promise<void> {
+  private async processCommandDirectly(command: ICommand, scope: ITransactionalScope): Promise<AnyEither> {
     const registered = this.handlers.get(command.meta.className)
     if (!registered) {
       throw new NoHandlerFoundError(`No handler registered for ${command.meta.className}`)
@@ -476,7 +467,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
       scope,
     }
 
-    await registered.handler.handle(command, ctx)
+    return registered.handler.handle(command, ctx)
   }
 
   /**
@@ -527,8 +518,7 @@ export function createOutboxCommandBus(
   eventStore: IEventStore,
   db: KyselyDb,
   pool: Pool,
-  workerConfig?: Partial<IWorkerConfig>,
-  rateLimitConfig?: IRateLimitConfig,
+  sharedWorker: PollingWorker,
 ): OutboxCommandBus {
-  return new OutboxCommandBus(logger, eventStore, db, pool, workerConfig, rateLimitConfig)
+  return new OutboxCommandBus(logger, eventStore, db, pool, sharedWorker)
 }

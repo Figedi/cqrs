@@ -8,14 +8,8 @@ import { v4 as uuid } from "uuid"
 import { deserializeEvent, serializeEvent } from "../common.js"
 import { ApplicationError } from "../errors.js"
 import type { KyselyDb } from "../infrastructure/db/index.js"
-import { createPollingWorker, type PollingWorker } from "../infrastructure/PollingWorker.js"
-import type {
-  EventStatus,
-  IEventStore,
-  IPersistedEvent,
-  IRateLimitConfig,
-  IWorkerConfig,
-} from "../infrastructure/types.js"
+import type { PollingWorker } from "../infrastructure/PollingWorker.js"
+import type { EventStatus, IEventStore, IPersistedEvent } from "../infrastructure/types.js"
 import {
   createStreamController,
   type IStreamEvent,
@@ -60,53 +54,40 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
     private readonly db: KyselyDb,
     private readonly pool: Pool,
     private readonly ctxProvider: ClassContextProvider,
-    private workerConfig?: Partial<IWorkerConfig>,
-    private rateLimitConfig?: IRateLimitConfig,
-    private ignoredSagas?: string[]
+    private sharedWorker: PollingWorker,
+    private ignoredSagas?: string[],
   ) {}
 
   /**
    * Initialize and start the event bus.
    */
   async preflight(): Promise<void> {
-    // Create polling worker for EVENT type
-    this.pollingWorker = createPollingWorker(
-      this.db,
-      this.pool,
-      this.logger,
+    this.pollingWorker = this.sharedWorker
+    this.pollingWorker.registerProcessor(
       "EVENT",
-      this.workerConfig,
-      this.rateLimitConfig,
-    )
-
-    await this.pollingWorker.initialize()
-
-    // Create stream controller
-    this.streamController = createStreamController()
-
-    // Start polling
-    await this.pollingWorker.start(
       async event => this.processEvent(event),
       (event, status, error) => this.onEventCompletion(event, status, error),
     )
+    await this.pollingWorker.initialize()
+    await this.pollingWorker.start()
+
+    this.streamController = createStreamController()
 
     this.logger.info("OutboxEventBus started")
   }
 
   /**
    * Shutdown the event bus gracefully.
+   * Stops the shared worker (runs after CommandBus shutdown).
    */
   async shutdown(): Promise<void> {
-    // Unsubscribe from sagas
     Object.values(this.sagaSubscriptions).forEach(subscription => subscription.unsubscribe())
     this.sagaSubscriptions = {}
 
-    if (this.pollingWorker) {
-      await this.pollingWorker.stop()
-    }
     if (this.streamController) {
       this.streamController.close()
     }
+    await this.sharedWorker.stop()
     this.logger.info("OutboxEventBus stopped")
   }
 
@@ -335,9 +316,8 @@ export function createOutboxEventBus(
   db: KyselyDb,
   pool: Pool,
   ctxProvider: ClassContextProvider,
-  workerConfig?: Partial<IWorkerConfig>,
-  rateLimitConfig?: IRateLimitConfig,
-  ignoredSagas?: string[]
+  sharedWorker: PollingWorker,
+  ignoredSagas?: string[],
 ): OutboxEventBus {
-  return new OutboxEventBus(logger, eventStore, db, pool, ctxProvider, workerConfig, rateLimitConfig, ignoredSagas)
+  return new OutboxEventBus(logger, eventStore, db, pool, ctxProvider, sharedWorker, ignoredSagas)
 }

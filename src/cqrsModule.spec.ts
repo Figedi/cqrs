@@ -423,6 +423,23 @@ describe("cqrsModule", () => {
         expect(rows[0]?.event?.payload?.id).to.equal(ID)
       })
 
+      it("executeSync with transient: true resolves with handler result (no outbox)", async () => {
+        const cmdCb = vi.fn()
+        const ExampleCommandHandler = createExampleCommandHandler(cmdCb)
+        cqrsModule.commandBus.register(new ExampleCommandHandler())
+        const cmdPayload = { id: ID, type: "command" }
+        const result = await cqrsModule.commandBus.executeSync(
+          new ExampleCommand(cmdPayload),
+          { transient: true },
+        )
+        expect(isRight(result)).to.equal(true)
+        expect(result as Right<Option<never>>).to.eql(right(none))
+        expect(cmdCb).toHaveBeenCalledOnce()
+        expect(cmdCb).toHaveBeenCalledWith(cmdPayload, expect.anything())
+        const { rows } = await adapter.query<any>(`SELECT * FROM events WHERE type = 'COMMAND'`)
+        expect(rows).to.have.lengthOf(0)
+      })
+
       it("accepts queries", async () => {
         const cmdCb = vi.fn()
         const ExampleQueryHandler = createExampleQueryHandler(cmdCb)

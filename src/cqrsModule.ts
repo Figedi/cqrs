@@ -8,6 +8,7 @@ import { createEventScheduler } from "./infrastructure/createEventScheduler.js"
 import { createEventStore } from "./infrastructure/createEventStore.js"
 import type { KyselyDb } from "./infrastructure/db/index.js"
 import { createKyselyFromPool } from "./infrastructure/db/index.js"
+import { createPollingWorker } from "./infrastructure/PollingWorker.js"
 import type {
   EventTypes,
   IEventScheduler,
@@ -77,13 +78,21 @@ export class CQRSModule {
         : this.settings.persistence
 
     // Prepare outbox options if enabled
-    const outboxOpts: IOutboxEventBusOptions | undefined = this.settings.outbox?.enabled
-      ? {
-          workerConfig: this.settings.outbox.worker,
-          rateLimitConfig: this.settings.outbox.rateLimit,
-          ignoredSagas: this.settings.outbox.ignoredSagas,
-        }
-      : undefined
+    const outboxOpts: IOutboxEventBusOptions | undefined =
+      this.settings.outbox?.enabled && this.settings.persistence.type === "pg"
+        ? {
+            workerConfig: this.settings.outbox.worker,
+            rateLimitConfig: this.settings.outbox.rateLimit,
+            ignoredSagas: this.settings.outbox.ignoredSagas,
+            sharedWorker: createPollingWorker(
+              this.db,
+              this.pool,
+              this.logger,
+              this.settings.outbox.worker,
+              this.settings.outbox.rateLimit,
+            ),
+          }
+        : undefined
 
     this.eventStore = createEventStore(opts)
     this.waitUntilIdle = createWaitUntilIdle(this.eventStore)

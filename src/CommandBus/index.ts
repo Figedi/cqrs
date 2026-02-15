@@ -1,3 +1,4 @@
+import type { PollingWorker } from "../infrastructure/PollingWorker.js"
 import type { IEventStore, IRateLimitConfig, IWorkerConfig } from "../infrastructure/types.js"
 import type { ICommandBus, IInitializedPostgresSettings, IPersistenceSettings, Logger } from "../types.js"
 import { InMemoryCommandBus } from "./InMemoryCommandBus.js"
@@ -9,6 +10,8 @@ export { InMemoryCommandBus }
 export interface IOutboxCommandBusOptions {
   workerConfig?: Partial<IWorkerConfig>
   rateLimitConfig?: IRateLimitConfig
+  /** Shared polling worker (required for outbox) */
+  sharedWorker: PollingWorker
 }
 
 /**
@@ -31,12 +34,14 @@ export const createCommandBus = (
   }
 
   // Use OutboxCommandBus for persistent storage
+  if (!outboxOpts?.sharedWorker) {
+    throw new Error("OutboxCommandBus requires sharedWorker in outbox options")
+  }
   return createOutboxCommandBus(
     logger,
     eventStore,
     (opts as IInitializedPostgresSettings).db,
     (opts as IInitializedPostgresSettings).pool,
-    outboxOpts?.workerConfig,
-    outboxOpts?.rateLimitConfig,
+    outboxOpts.sharedWorker,
   )
 }
