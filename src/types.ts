@@ -4,7 +4,7 @@ import type { Transaction } from "kysely"
 import type { Observable } from "rxjs"
 import type { ErrorObject } from "serialize-error"
 import type { UowTxSettings } from "./decorators/UowDecorator.js"
-import type { Database, KyselyDb } from "./infrastructure/db/index.js"
+import type { Database, IDbAdapter, KyselyDb } from "./infrastructure/db/index.js"
 import type { IPersistedEvent, IRateLimitConfig, IRetryConfig, IWorkerConfig } from "./infrastructure/types.js"
 
 type LogFn = {
@@ -79,8 +79,6 @@ export type IPersistenceSettings =  IPostgresSettings | IPgliteSettings
 /** Configuration for the outbox pattern (optional, enables OutboxCommandBus/OutboxEventBus) */
 export interface IOutboxSettings {
   ignoredSagas?: string[]
-  /** Enable the outbox pattern (default: false for backward compatibility) */
-  enabled: boolean
   /** Worker configuration */
   worker?: Partial<IWorkerConfig>
   /** Rate limit configuration */
@@ -191,6 +189,7 @@ export interface ICommandHandler<Command extends ICommand, TRes extends AnyEithe
 }
 
 export interface IDecorator {
+  setAdapter(adapter: IDbAdapter): void
   decorate<T extends ICommand | IQuery, TRes extends AnyEither>(
     handler: ICommandHandler<T, TRes> | IQueryHandler<T, TRes>,
   ): ICommandHandler<T, TRes> | IQueryHandler<T, TRes>
@@ -218,7 +217,7 @@ export interface IQueryBus extends ServiceWithLifecycleHandlers {
 
 export interface ICommandBus extends ServiceWithLifecycleHandlers {
   registeredCommands: Constructor<ICommand>[]
-
+  setAdapter(adapter: IDbAdapter): void
   registerDecorator(decorator: IDecorator): void
   drain(opts?: DrainOptions): Promise<void>
   deserializeCommand(commands: IPersistedEvent): ICommand

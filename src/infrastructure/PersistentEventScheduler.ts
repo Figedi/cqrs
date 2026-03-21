@@ -15,12 +15,16 @@ import type { IEventScheduler, IScheduleOptions } from "./types.js"
 
 export class PersistentEventScheduler implements IEventScheduler, ServiceWithLifecycleHandlers {
   private schedules: Record<string, NodeJS.Timeout> = {}
+  private adapter?: IDbAdapter
+
+  public setAdapter(adapter: IDbAdapter): void {
+    this.adapter = adapter
+  }
 
   constructor(
     private opts: IPersistenceSettings,
     private commandBus: ICommandBus,
     private logger: Logger,
-    private adapter: IDbAdapter,
   ) {}
 
 
@@ -70,7 +74,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
       throw new Error(`ScheduledEvent for passed command w/ eventId ${eventId} already exists, refusing to schedule it`)
     }
 
-    const result = await this.adapter.db
+    const result = await this.adapter!.db
       .insertInto("scheduledEvents")
       .values({
         scheduledEventId: eventId,
@@ -100,7 +104,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
       throw new Error("Passed command does not have an eventId, refusing to schedule it")
     }
 
-    await this.adapter.db.updateTable("scheduledEvents").set({ status }).where("scheduledEventId", "=", eventId).execute()
+    await this.adapter!.db.updateTable("scheduledEvents").set({ status }).where("scheduledEventId", "=", eventId).execute()
 
     const timer = this.schedules[eventId]
     if (status !== "CREATED" && timer) {
@@ -110,7 +114,7 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
   }
 
   public async reset(): Promise<number> {
-    const result = await this.adapter.db
+    const result = await this.adapter!.db
       .updateTable("scheduledEvents")
       .set({ status: "CREATED" })
       .where("status", "=", "ABORTED")
@@ -123,11 +127,14 @@ export class PersistentEventScheduler implements IEventScheduler, ServiceWithLif
   }
 
   public async preflight(): Promise<void> {
+    if (!this.adapter) {
+      throw new Error("Adapter not set. Call setAdapter() before preflight().")
+    }
     if (this.opts.runMigrations) {
-      await runScheduledEventsMigration(this.adapter.db)
+      await runScheduledEventsMigration(this.adapter!.db)
     }
 
-    const eventSchedules = await this.adapter.db
+    const eventSchedules = await this.adapter!.db
       .selectFrom("scheduledEvents")
       .selectAll()
       .where("status", "=", "CREATED")

@@ -143,40 +143,6 @@ const executeAndWaitForPersistentCommand = async <T, TRes extends VoidEither>(
   return result ?? (right(none) as TRes)
 }
 
-const executeAndWaitForInmemoryCommand = async <T, TRes extends VoidEither>(
-  commandBus: ICommandBus,
-  command: ICommand<T, TRes>,
-) => {
-  let respId: string
-
-  // Subscribe to stream to verify it emits when command is processed
-  // Note: stream() returns the command itself (ICommand), not the handler result
-  // The event has meta.eventId, not eventId directly
-  const streamEvent$ = new Promise<void>((resolve, reject) =>
-    commandBus.stream(command.constructor.name).subscribe({
-      next: (event: any) => {
-        if (event.meta?.eventId === respId) {
-          resolve()
-        }
-      },
-      error: reject,
-    }),
-  )
-
-  const commandResponse = await commandBus.execute(command)
-  if (!isRight(commandResponse)) {
-    throw new Error("Command failed")
-  }
-  respId = commandResponse.right
-
-  // Wait for stream emission (verifies stream mechanism works)
-  await streamEvent$
-
-  // For in-memory bus, return right(none) as the handler's success result
-  // The actual handler result is emitted on a separate results$ stream (internal)
-  return right(none) as TRes
-}
-
 const txSettings = {
   enabled: true,
   timeoutMs: 0,
@@ -212,7 +178,6 @@ describe("cqrsModule", () => {
           runMigrations: true,
         },
         outbox: {
-          enabled: true,
           worker: { pollIntervalMs: 100 },
         },
       }
@@ -257,8 +222,8 @@ describe("cqrsModule", () => {
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb)
         const cmdPayload = { id: ID, type: "command" }
 
-        cqrsModule.commandBus.register(new ExampleCommandHandler())
-        await cqrsModule.eventScheduler.scheduleCommand(new ExampleCommand(cmdPayload), new Date(now + 100), resultCb, {
+        cqrsModule.commandBus!!.register(new ExampleCommandHandler())
+        await cqrsModule.eventScheduler!!.scheduleCommand(new ExampleCommand(cmdPayload), new Date(now + 100), resultCb, {
           executeSync: true,
         })
         const { rows: scheduledEvents } = await client.query<any>(
@@ -292,9 +257,9 @@ describe("cqrsModule", () => {
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb)
         const cmdPayload = { id: ID, type: "command" }
 
-        cqrsModule.commandBus.register(new ExampleCommandHandler())
+        cqrsModule.commandBus!.register(new ExampleCommandHandler())
         const command = new ExampleCommand(cmdPayload)
-        await cqrsModule.eventScheduler.scheduleCommand(command, new Date(now + 100), resultCb, {
+        await cqrsModule.eventScheduler!.scheduleCommand(command, new Date(now + 100), resultCb, {
           executeSync: false,
         })
         const { rows: scheduledEvents } = await client.query<any>(
@@ -339,10 +304,10 @@ describe("cqrsModule", () => {
         }
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb, ExampleCommand, false)
 
-        cqrsModule.commandBus.register(new ExampleCommandHandler())
+        cqrsModule.commandBus!.register(new ExampleCommandHandler())
 
         const results = await Promise.all([
-          ...times(100, i => cqrsModule.commandBus.execute(new ExampleCommand({ id: "42", type: `test${i}` }))),
+          ...times(100, i => cqrsModule.commandBus!.execute(new ExampleCommand({ id: "42", type: `test${i}` }))),
         ])
 
         if (results.some(isLeft)) {
@@ -363,9 +328,9 @@ describe("cqrsModule", () => {
       it("accepts commands", async () => {
         const cmdCb = vi.fn()
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb)
-        cqrsModule.commandBus.register(new ExampleCommandHandler())
+        cqrsModule.commandBus!.register(new ExampleCommandHandler())
         const cmdPayload = { id: ID, type: "command" }
-        await executeAndWaitForPersistentCommand(adapter, cqrsModule.commandBus, new ExampleCommand(cmdPayload))
+        await executeAndWaitForPersistentCommand(adapter, cqrsModule.commandBus!, new ExampleCommand(cmdPayload))
         expect(cmdCb).toHaveBeenCalledOnce()
         expect(cmdCb).toHaveBeenCalledWith(cmdPayload, expect.anything())
         const { rows } = await adapter.query<any>(`SELECT * FROM events WHERE type = 'EVENT'`)
@@ -376,9 +341,9 @@ describe("cqrsModule", () => {
       it("executeSync with transient: true resolves with handler result (no outbox)", async () => {
         const cmdCb = vi.fn()
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb)
-        cqrsModule.commandBus.register(new ExampleCommandHandler())
+        cqrsModule.commandBus!.register(new ExampleCommandHandler())
         const cmdPayload = { id: ID, type: "command" }
-        const result = await cqrsModule.commandBus.executeSync(
+        const result = await cqrsModule.commandBus!.executeSync(
           new ExampleCommand(cmdPayload),
           { transient: true },
         )
@@ -424,8 +389,8 @@ describe("cqrsModule", () => {
         }
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb1, ExampleCommand)
         const OtherCommandHandler = createExampleCommandHandler(cmdCb2, OtherCommand)
-        cqrsModule.commandBus.register(new ExampleCommandHandler())
-        cqrsModule.commandBus.register(new OtherCommandHandler())
+        cqrsModule.commandBus!.register(new ExampleCommandHandler())
+        cqrsModule.commandBus!.register(new OtherCommandHandler())
         const cmd1 = new ExampleCommand({ id: ID, type: "command1" })
         const cmd2 = new OtherCommand({ id: ID, type: "command2" })
         const streamId1 = cmd1.meta.streamId ?? uuid()
@@ -458,7 +423,7 @@ describe("cqrsModule", () => {
           ],
         )
 
-        await cqrsModule.commandBus.drain({ ignoredEventIds: [cmd1.meta.eventId!] })
+        await cqrsModule.commandBus!.drain({ ignoredEventIds: [cmd1.meta.eventId!] })
         await cqrsModule.waitUntilSettled([streamId2])
 
         // Use explicit count checks to avoid pretty-printer issues with vi.fn()
@@ -471,8 +436,8 @@ describe("cqrsModule", () => {
         const cmdCb2 = vi.fn()
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb1, ExampleCommand)
         const OtherCommandHandler = createExampleCommandHandler(cmdCb2, OtherCommand)
-        cqrsModule.commandBus.register(new ExampleCommandHandler())
-        cqrsModule.commandBus.register(new OtherCommandHandler())
+        cqrsModule.commandBus!.register(new ExampleCommandHandler())
+        cqrsModule.commandBus!.register(new OtherCommandHandler())
         const cmd1 = new ExampleCommand({ id: ID, type: "command1" })
         const cmd2 = new OtherCommand({ id: ID, type: "command2" })
         const streamId1 = cmd1.meta.streamId ?? uuid()
@@ -506,7 +471,7 @@ describe("cqrsModule", () => {
           ],
         )
 
-        await cqrsModule.commandBus.replay(cmd1.meta.eventId!)
+        await cqrsModule.commandBus!.replay(cmd1.meta.eventId!)
         await cqrsModule.waitUntilSettled([streamId1])
         expect(cmdCb1).toHaveBeenCalledOnce()
         expect(cmdCb2).not.toHaveBeenCalled()
@@ -523,8 +488,8 @@ describe("cqrsModule", () => {
         const cmdCb2 = vi.fn()
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb1, ExampleCommand)
         const OtherCommandHandler = createExampleCommandHandler(cmdCb2, OtherCommand)
-        cqrsModule.commandBus.register(new ExampleCommandHandler())
-        cqrsModule.commandBus.register(new OtherCommandHandler())
+        cqrsModule.commandBus!.register(new ExampleCommandHandler())
+        cqrsModule.commandBus!.register(new OtherCommandHandler())
         const cmd1 = new ExampleCommand({ id: ID, type: "command1" })
         const cmd2 = new OtherCommand({ id: ID, type: "command2" })
         const streamId1 = cmd1.meta.streamId ?? uuid()
@@ -558,7 +523,7 @@ describe("cqrsModule", () => {
           ],
         )
 
-        await cqrsModule.commandBus.replayAllFailed()
+        await cqrsModule.commandBus!.replayAllFailed()
         await cqrsModule.waitUntilSettled([streamId1, streamId2])
         expect(cmdCb1).toHaveBeenCalledOnce()
         expect(cmdCb2).not.toHaveBeenCalled()
@@ -593,7 +558,7 @@ describe("cqrsModule", () => {
           }
         }
         const CommandHandler = createExampleCommandHandler(cmdCb)
-        cqrsModule.commandBus.register(new CommandHandler())
+        cqrsModule.commandBus!.register(new CommandHandler())
         cqrsModule.eventBus.registerSagas(new ExampleSaga())
         /**
          * note that here we are triggering NOT exampleEvent as it is being triggered upon each command-handler
@@ -625,10 +590,10 @@ describe("cqrsModule", () => {
          */
         const cmdCb = vi.fn()
         const ExampleCommandHandler = createExampleCommandHandler(cmdCb)
-        cqrsModule.commandBus.register(new ExampleCommandHandler())
+        cqrsModule.commandBus!.register(new ExampleCommandHandler())
         const cmdPayload = { id: ID, type: "command" }
 
-        await executeAndWaitForPersistentCommand(adapter, cqrsModule.commandBus, new ExampleCommand(cmdPayload))
+        await executeAndWaitForPersistentCommand(adapter, cqrsModule.commandBus!, new ExampleCommand(cmdPayload))
 
         expect(cmdCb).toHaveBeenCalledOnce()
         expect(cmdCb).toHaveBeenCalledWith(cmdPayload, expect.anything())

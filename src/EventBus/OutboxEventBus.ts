@@ -39,7 +39,6 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
   protected registeredEvents: Constructor<IEvent>[] = []
 
   private sagaSubscriptions: Record<string, Subscription> = {}
-  private pollingWorker?: PollingWorker
   private streamController?: StreamController
 
   // Internal RxJS subjects for saga compatibility
@@ -50,22 +49,19 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
     private readonly logger: Logger,
     private readonly eventStore: IEventStore,
     private readonly ctxProvider: ClassContextProvider,
-    private sharedWorker: PollingWorker,
+    private pollingWorker: PollingWorker,
     private ignoredSagas?: string[],
   ) {}
 
   /**
-   * Initialize and start the event bus.
+   * Register EVENT processor on the shared worker. Worker preflight/start is done by CQRSModule.
    */
   async preflight(): Promise<void> {
-    this.pollingWorker = this.sharedWorker
     this.pollingWorker.registerProcessor(
       "EVENT",
       async event => this.processEvent(event),
       (event, status, error) => this.onEventCompletion(event, status, error),
     )
-    await this.pollingWorker.initialize()
-    await this.pollingWorker.start()
 
     this.streamController = createStreamController()
 
@@ -73,8 +69,7 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
   }
 
   /**
-   * Shutdown the event bus gracefully.
-   * Stops the shared worker (runs after CommandBus shutdown).
+   * Shutdown the event bus gracefully. Shared worker is stopped by CQRSModule.shutdown().
    */
   async shutdown(): Promise<void> {
     Object.values(this.sagaSubscriptions).forEach(subscription => subscription.unsubscribe())
@@ -83,7 +78,6 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
     if (this.streamController) {
       this.streamController.close()
     }
-    await this.sharedWorker.stop()
     this.logger.info("OutboxEventBus stopped")
   }
 

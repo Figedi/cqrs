@@ -34,11 +34,16 @@ export interface UowTxSettings {
 }
 
 export class UowDecorator implements IDecorator {
+  private adapter?: IDbAdapter
+  
   constructor(
     private txSettings: UowTxSettings,
     private ctxProvider: ClassContextProvider,
-    private adapter: IDbAdapter,
   ) {}
+
+  public setAdapter(adapter: IDbAdapter): void {
+    this.adapter = adapter
+  }
 
   private async maybePublishCommandEvents<TPayload extends ICommand, TRes extends AnyEither>(
     parentCommand: TPayload,
@@ -177,7 +182,7 @@ export class UowDecorator implements IDecorator {
           }
 
           // Otherwise, start a new transaction
-          return await this.adapter.db
+          return await this.adapter!.db
             .transaction()
             .setIsolationLevel(isolationLevel)
             .execute(async trx => executeInTransaction(trx))

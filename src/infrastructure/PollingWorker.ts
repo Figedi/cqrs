@@ -1,7 +1,7 @@
 import { sql, type Transaction } from "kysely"
 import { v4 as uuid } from "uuid"
 import type { IDbAdapter } from "./db/index.js"
-import type { Database, KyselyDb } from "./db/index.js"
+import type { Database } from "./db/index.js"
 import type { Logger } from "../types.js"
 import type { EventStatus, EventTypes, IPersistedEvent, IPollResult, IRateLimitConfig, IWorkerConfig } from "./types.js"
 import { calculateNextRetryAt, DEFAULT_RETRY_CONFIG, shouldAbort } from "./utils/backoff.js"
@@ -51,9 +51,9 @@ export class PollingWorker {
   private notifyListeners = new Map<string, (status: EventStatus) => void>()
   private processors = new Map<EventTypes, IRegisteredProcessor>()
   private isInitialized = false
+  private adapter?: IDbAdapter
 
   constructor(
-    private adapter: IDbAdapter,
     private logger: Logger,
     config?: Partial<IWorkerConfig>,
     private rateLimitConfig?: IRateLimitConfig,
@@ -70,11 +70,15 @@ export class PollingWorker {
     }
   }
 
+  public setAdapter(adapter: IDbAdapter): void {
+    this.adapter = adapter
+  }
+
   /**
    * Register a processor for an event type (COMMAND or EVENT).
    * Can be called before or after start() - supports frameworks with arbitrary preflight order.
    */
-  registerProcessor(
+  public registerProcessor(
     eventType: EventTypes,
     processor: EventProcessor,
     onCompletion?: CompletionCallback,
@@ -83,60 +87,22 @@ export class PollingWorker {
   }
 
   /**
-   * Initialize the worker (rate limiter, LISTEN/NOTIFY).
-   * Idempotent - safe to call multiple times.
+   * Lifecycle: initialize (rate limiter, LISTEN/NOTIFY) and start polling.
+   * Call from CQRSModule.preflight() after buses have registered their processors.
    */
-  async initialize(): Promise<void> {
-    if (this.isInitialized) {
-      return
+  public async preflight(): Promise<void> {
+    if (!this.adapter) {
+      throw new Error("Adapter not set. Call setAdapter() before preflight().")
     }
-    this.isInitialized = true
-
-    // Initialize rate limiter if configured
-    if (this.rateLimitConfig?.maxPerSecond) {
-      this.rateLimiter = await this.adapter.getRateLimiter(this.rateLimitConfig)
-    }
-
-    // Setup LISTEN/NOTIFY for executeSync
-    await this.setupNotifyListener()
+    await this.initialize()
+    await this.start()
   }
 
   /**
-   * Start the polling worker.
-   * Uses processors registered via registerProcessor().
+   * Lifecycle: stop polling and release NOTIFY connection.
+   * Call from CQRSModule.shutdown().
    */
-  async start(): Promise<void> {
-    if (this.isRunning) {
-      return
-    }
-    if (this.processors.size === 0) {
-      throw new Error("No processors registered. Call registerProcessor() before start().")
-    }
-    this.isRunning = true
-
-    const eventTypes = Array.from(this.processors.keys())
-    this.logger.info({ workerId: this.workerId, eventTypes }, "Starting polling worker")
-
-    // Start polling loop
-    this.pollingTimer = setInterval(async () => {
-      if (!this.isRunning) return
-      await this.pollAndProcess()
-    }, this.config.pollIntervalMs)
-
-    // Start stale lock cleanup (every 30 seconds)
-    this.staleLockTimer = setInterval(async () => {
-      if (!this.isRunning) return
-      await this.cleanupStaleLocks()
-    }, 30000)
-
-    // Initial poll
-    await this.pollAndProcess()
-  }
-
-  /**
-   * Stop the polling worker gracefully.
-   */
-  async stop(): Promise<void> {
+  public async shutdown(): Promise<void> {
     this.isRunning = false
 
     if (this.pollingTimer) {
@@ -149,22 +115,59 @@ export class PollingWorker {
       this.staleLockTimer = undefined
     }
 
-    // Close NOTIFY listener
     try {
-      await this.adapter.unlisten("cqrs_event_status")
+      await this.adapter!.unlisten("cqrs_event_status")
     } catch {
       // Ignore errors during cleanup
     }
-    await this.adapter.releaseNotify()
+    await this.adapter!.releaseNotify()
 
     this.logger.info({ workerId: this.workerId }, "Polling worker stopped")
+  }
+
+  private async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      return
+    }
+    this.isInitialized = true
+
+    if (this.rateLimitConfig?.maxPerSecond) {
+      this.rateLimiter = await this.adapter!.getRateLimiter(this.rateLimitConfig)
+    }
+
+    await this.setupNotifyListener()
+  }
+
+  private async start(): Promise<void> {
+    if (this.isRunning) {
+      return
+    }
+    if (this.processors.size === 0) {
+      throw new Error("No processors registered. Call registerProcessor() before preflight().")
+    }
+    this.isRunning = true
+
+    const eventTypes = Array.from(this.processors.keys())
+    this.logger.info({ workerId: this.workerId, eventTypes }, "Starting polling worker")
+
+    this.pollingTimer = setInterval(async () => {
+      if (!this.isRunning) return
+      await this.pollAndProcess()
+    }, this.config.pollIntervalMs)
+
+    this.staleLockTimer = setInterval(async () => {
+      if (!this.isRunning) return
+      await this.cleanupStaleLocks()
+    }, 30000)
+
+    await this.pollAndProcess()
   }
 
   /**
    * Wait for a specific event to complete (for executeSync).
    * Uses LISTEN/NOTIFY when available, with polling fallback for environments that lack it (e.g. PGlite).
    */
-  async waitForCompletion(eventId: string, timeoutMs: number = 0): Promise<EventStatus> {
+  public async waitForCompletion(eventId: string, timeoutMs: number = 0): Promise<EventStatus> {
     return new Promise((resolve, reject) => {
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined
       let pollInterval: ReturnType<typeof setInterval> | undefined
@@ -217,7 +220,7 @@ export class PollingWorker {
   /**
    * Wait for multiple events to complete.
    */
-  async waitForCompletionBatch(eventIds: string[], timeoutMs: number = 0): Promise<Map<string, EventStatus>> {
+  public async waitForCompletionBatch(eventIds: string[], timeoutMs: number = 0): Promise<Map<string, EventStatus>> {
     const results = new Map<string, EventStatus>()
     const promises = eventIds.map(async eventId => {
       const status = await this.waitForCompletion(eventId, timeoutMs)
@@ -263,7 +266,7 @@ export class PollingWorker {
       return { claimed: [], hasMore: false }
     }
 
-    return await this.db.transaction().execute(async trx => {
+    return await this.adapter!.db.transaction().execute(async trx => {
       // SELECT with FOR UPDATE SKIP LOCKED to atomically claim rows
       const selected = await trx
         .selectFrom("events")
@@ -344,7 +347,7 @@ export class PollingWorker {
     }
 
     try {
-      await this.db.transaction().execute(async trx => {
+      await this.adapter!.db.transaction().execute(async trx => {
         // Process the event (handler may update event meta within this transaction)
         await processor(event, trx)
 
@@ -392,7 +395,7 @@ export class PollingWorker {
    * Mark an event as processed.
    */
   private async markProcessed(eventId: string, trx?: Transaction<Database>): Promise<void> {
-    const db = trx ?? this.db
+    const db = trx ?? this.adapter!.db
     await db
       .updateTable("events")
       .set({
@@ -408,7 +411,7 @@ export class PollingWorker {
    * Mark an event as failed with retry scheduling.
    */
   private async markFailed(eventId: string, retryCount: number, nextRetryAt: Date, error: Error): Promise<void> {
-    await this.db
+    await this.adapter!.db
       .updateTable("events")
       .set({
         status: "FAILED",
@@ -429,7 +432,7 @@ export class PollingWorker {
    * Mark an event as aborted (max retries exceeded).
    */
   private async markAborted(eventId: string, retryCount: number, error: Error): Promise<void> {
-    await this.db
+    await this.adapter!.db
       .updateTable("events")
       .set({
         status: "ABORTED",
@@ -449,7 +452,7 @@ export class PollingWorker {
    * Release a lock (e.g., when rate limited).
    */
   private async releaseLock(eventId: string): Promise<void> {
-    await this.db
+    await this.adapter!.db
       .updateTable("events")
       .set({
         status: "CREATED",
@@ -467,7 +470,7 @@ export class PollingWorker {
   private async cleanupStaleLocks(): Promise<void> {
     const lockTimeoutInterval = `${this.config.lockTimeoutMs} milliseconds`
 
-    const result = await this.db
+    const result = await this.adapter!.db
       .updateTable("events")
       .set({
         status: "FAILED",
@@ -491,7 +494,7 @@ export class PollingWorker {
    * Setup LISTEN/NOTIFY for executeSync.
    */
   private async setupNotifyListener(): Promise<void> {
-    this.adapter.onNotification((channel, payload) => {
+    this.adapter!.onNotification((channel, payload) => {
       if (channel === "cqrs_event_status" && payload) {
         try {
           const data = JSON.parse(payload)
@@ -505,32 +508,15 @@ export class PollingWorker {
       }
     })
 
-    await this.adapter.listen("cqrs_event_status")
-  }
-
-  private get db(): KyselyDb {
-    return this.adapter.db
+    await this.adapter!.listen("cqrs_event_status")
   }
 
   /**
    * Check the current status of an event.
    */
   private async checkEventStatus(eventId: string): Promise<EventStatus | null> {
-    const result = await this.db.selectFrom("events").select("status").where("eventId", "=", eventId).executeTakeFirst()
+    const result = await this.adapter!.db.selectFrom("events").select("status").where("eventId", "=", eventId).executeTakeFirst()
 
     return result?.status ?? null
   }
-}
-
-/**
- * Create a new shared PollingWorker instance.
- * Register processors for COMMAND and/or EVENT via registerProcessor() before calling start().
- */
-export function createPollingWorker(
-  adapter: IDbAdapter,
-  logger: Logger,
-  config?: Partial<IWorkerConfig>,
-  rateLimitConfig?: IRateLimitConfig,
-): PollingWorker {
-  return new PollingWorker(adapter, logger, config, rateLimitConfig)
 }

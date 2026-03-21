@@ -12,7 +12,7 @@ import {
   NoHandlerFoundError,
   TimeoutExceededError,
 } from "../errors.js"
-import type { Database, IDbAdapter, KyselyDb } from "../infrastructure/db/index.js"
+import type { Database, IDbAdapter } from "../infrastructure/db/index.js"
 import type { PollingWorker } from "../infrastructure/PollingWorker.js"
 import type { EventStatus, IEventStore, IPersistedEvent } from "../infrastructure/types.js"
 import {
@@ -67,27 +67,29 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
 
   private handlers: Map<string, IRegisteredHandler> = new Map()
   private decorators: IDecorator[] = []
-  private pollingWorker?: PollingWorker
   private streamController?: StreamController
+  private adapter?: IDbAdapter
 
-  constructor(
-    private logger: Logger,
-    private eventStore: IEventStore,
-    private adapter: IDbAdapter,
-    private sharedWorker: PollingWorker,
-  ) {}
+  constructor(private logger: Logger, private eventStore: IEventStore, private pollingWorker: PollingWorker) {}
+
+  public setAdapter(adapter: IDbAdapter): void {
+    this.adapter = adapter
+  }
 
   /**
    * Initialize and start the command bus.
    */
   async preflight(): Promise<void> {
-    this.pollingWorker = this.sharedWorker
+    if (!this.adapter) {
+      throw new Error("Adapter not set. Call setAdapter() before preflight().")
+    }
+
+    this.decorators.forEach(decorator => decorator.setAdapter(this.adapter!));
     this.pollingWorker.registerProcessor(
       "COMMAND",
       async (event, client) => this.processEvent(event, client),
       (event, status, error) => this.onEventCompletion(event, status, error),
     )
-    // Worker initialized/started by EventBus (preflights after CommandBus)
 
     this.streamController = createStreamController()
 
@@ -172,7 +174,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
 
     // Transient commands bypass persistence
     if (transient) {
-      const result = await this.processCommandDirectly(command, opts?.scope || this.adapter.db)
+      const result = await this.processCommandDirectly(command, opts?.scope || this.adapter!.db)
       if (isLeft(result)) {
         return left(result.left) as TRes
       }
@@ -219,7 +221,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
 
     // Transient commands bypass outbox - execute directly and return result
     if (transient) {
-      const result = await this.processCommandDirectly(command, opts?.scope || this.adapter.db)
+      const result = await this.processCommandDirectly(command, opts?.scope || this.adapter!.db)
       return result as TRes
     }
 
@@ -506,16 +508,4 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
       },
     })
   }
-}
-
-/**
- * Create an OutboxCommandBus instance.
- */
-export function createOutboxCommandBus(
-  logger: Logger,
-  eventStore: IEventStore,
-  db: KyselyDb,
-  sharedWorker: PollingWorker,
-): OutboxCommandBus {
-  return new OutboxCommandBus(logger, eventStore, db, sharedWorker)
 }

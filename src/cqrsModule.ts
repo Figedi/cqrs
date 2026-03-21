@@ -3,7 +3,7 @@ import { UowDecorator } from "./decorators/UowDecorator.js"
 import { ApplicationError } from "./errors.js"
 import { createDbAdapter } from "./infrastructure/db/index.js"
 import type { IDbAdapter } from "./infrastructure/db/index.js"
-import { createPollingWorker } from "./infrastructure/PollingWorker.js"
+import { PollingWorker } from "./infrastructure/PollingWorker.js"
 import type {
   EventTypes,
   IEventScheduler,
@@ -35,11 +35,11 @@ export class CQRSModule {
 
   public waitUntilSettled!: ReturnType<typeof createWaitUntilSettled>
 
-  public commandBus?: ICommandBus
+  public commandBus!: ICommandBus
 
-  public eventBus?: IEventBus
+  public eventBus!: IEventBus
 
-  public queryBus?: IQueryBus
+  public queryBus!: IQueryBus
 
   public eventScheduler?: IEventScheduler
 
@@ -47,38 +47,47 @@ export class CQRSModule {
 
   private adapter?: IDbAdapter
 
+  private pollingWorker?: PollingWorker
+
   constructor(
     private settings: ICQRSSettings,
     private logger: Logger,
   ) {
+    this.init()
   }
 
 
-  private wirePersistence(adapter: IDbAdapter): void {
+  private init(): void {
     const ctxProvider = () => ({
       queryBus: this.queryBus!,
       eventBus: this.eventBus!,
       commandBus: this.commandBus!,
     });
 
-    const pollingWorker = createPollingWorker(
-      this.adapter!,
+    this.pollingWorker = new PollingWorker(
       this.logger,
       this.settings.outbox?.worker,
       this.settings.outbox?.rateLimit,
-    );
+    )
 
-    this.eventStore = new PersistentEventStore(this.settings.persistence, adapter)
+    this.eventStore = new PersistentEventStore(this.settings.persistence)
     this.waitUntilIdle = createWaitUntilIdle(this.eventStore)
     this.waitUntilSettled = createWaitUntilSettled(this.eventStore)
-    this.commandBus = new OutboxCommandBus(this.logger, this.eventStore, adapter, pollingWorker)
-    this.eventBus = new OutboxEventBus(this.logger, this.eventStore, ctxProvider, pollingWorker, this.settings.outbox?.ignoredSagas)
+    this.commandBus = new OutboxCommandBus(this.logger, this.eventStore, this.pollingWorker)
+    this.eventBus = new OutboxEventBus(this.logger, this.eventStore, ctxProvider, this.pollingWorker, this.settings.outbox?.ignoredSagas)
     this.queryBus = new PersistentQueryBus(this.logger, this.eventStore)
     this.commandBus.registerDecorator(new LoggingDecorator(this.logger))
-    this.commandBus.registerDecorator(new UowDecorator(this.settings.transaction, ctxProvider, adapter))
+    this.commandBus.registerDecorator(new UowDecorator(this.settings.transaction, ctxProvider))
     this.queryBus.registerDecorator(new LoggingDecorator(this.logger))
     this.timeBasedEventScheduler = new TimeBasedEventScheduler(this.eventBus, this.logger)
-    this.eventScheduler = new PersistentEventScheduler(this.settings.persistence, this.commandBus, this.logger, adapter)
+    this.eventScheduler = new PersistentEventScheduler(this.settings.persistence, this.commandBus, this.logger)
+  }
+
+  private wirePersistence(adapter: IDbAdapter): void {
+    this.pollingWorker?.setAdapter(adapter);
+    this.commandBus?.setAdapter(adapter);
+    this.eventStore?.setAdapter(adapter);
+    this.eventScheduler?.setAdapter(adapter);
   }
 
   /**
@@ -136,6 +145,9 @@ export class CQRSModule {
     if (this.eventBus && "preflight" in this.eventBus) {
       await (this.eventBus as any).preflight()
     }
+    if (this.pollingWorker) {
+      await this.pollingWorker.preflight()
+    }
   }
 
   /**
@@ -148,6 +160,9 @@ export class CQRSModule {
     }
     if (this.eventBus && "shutdown" in this.eventBus) {
       await (this.eventBus as any).shutdown()
+    }
+    if (this.pollingWorker) {
+      await this.pollingWorker.shutdown()
     }
     if (this.timeBasedEventScheduler && "shutdown" in this.timeBasedEventScheduler) {
       await (this.timeBasedEventScheduler as any).shutdown()

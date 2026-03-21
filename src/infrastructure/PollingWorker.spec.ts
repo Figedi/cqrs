@@ -5,7 +5,7 @@ import { createPGliteAdapter } from "./db/index.js"
 import { runEventsMigration } from "./db/index.js"
 import type { IDbAdapter } from "./db/index.js"
 import type { KyselyDb } from "./db/index.js"
-import { createPollingWorker } from "./PollingWorker.js"
+import { PollingWorker } from "./PollingWorker.js"
 
 describe("PollingWorker", () => {
   let db: KyselyDb
@@ -38,14 +38,14 @@ describe("PollingWorker", () => {
       const commandProcessor = vi.fn().mockResolvedValue(undefined)
       const eventProcessor = vi.fn().mockResolvedValue(undefined)
 
-      const worker = createPollingWorker(dbAdapter, logger, {
+      const worker = new PollingWorker(logger, {
         pollIntervalMs: 50,
         batchSize: 10,
       })
+      worker.setAdapter(dbAdapter)
       worker.registerProcessor("COMMAND", commandProcessor)
       worker.registerProcessor("EVENT", eventProcessor)
-      await worker.initialize()
-      await worker.start()
+      await worker.preflight()
 
       const eventId = uuid()
       await db
@@ -72,21 +72,21 @@ describe("PollingWorker", () => {
       )
       expect(eventProcessor).not.toHaveBeenCalled()
 
-      await worker.stop()
+      await worker.shutdown()
     })
 
     it("dispatches EVENT events to EVENT processor", async () => {
       const commandProcessor = vi.fn().mockResolvedValue(undefined)
       const eventProcessor = vi.fn().mockResolvedValue(undefined)
 
-      const worker = createPollingWorker(dbAdapter, logger, {
+      const worker = new PollingWorker(logger, {
         pollIntervalMs: 50,
         batchSize: 10,
       })
+      worker.setAdapter(dbAdapter)
       worker.registerProcessor("COMMAND", commandProcessor)
       worker.registerProcessor("EVENT", eventProcessor)
-      await worker.initialize()
-      await worker.start()
+      await worker.preflight()
 
       const eventId = uuid()
       await db
@@ -113,21 +113,21 @@ describe("PollingWorker", () => {
       )
       expect(commandProcessor).not.toHaveBeenCalled()
 
-      await worker.stop()
+      await worker.shutdown()
     })
 
     it("processes both COMMAND and EVENT types in same poll cycle", async () => {
       const commandProcessor = vi.fn().mockResolvedValue(undefined)
       const eventProcessor = vi.fn().mockResolvedValue(undefined)
 
-      const worker = createPollingWorker(dbAdapter, logger, {
+      const worker = new PollingWorker(logger, {
         pollIntervalMs: 50,
         batchSize: 10,
-      })
+      });
+      worker.setAdapter(dbAdapter)
       worker.registerProcessor("COMMAND", commandProcessor)
       worker.registerProcessor("EVENT", eventProcessor)
-      await worker.initialize()
-      await worker.start()
+      await worker.preflight()
 
       const cmdId = uuid()
       const evtId = uuid()
@@ -172,20 +172,20 @@ describe("PollingWorker", () => {
         expect.anything(),
       )
 
-      await worker.stop()
+      await worker.shutdown()
     })
 
     it("allows registerProcessor after worker has started", async () => {
       const commandProcessor = vi.fn().mockResolvedValue(undefined)
       const eventProcessor = vi.fn().mockResolvedValue(undefined)
 
-      const worker = createPollingWorker(dbAdapter, logger, {
+      const worker = new PollingWorker(logger, {
         pollIntervalMs: 50,
         batchSize: 10,
-      })
+      });
+      worker.setAdapter(dbAdapter)
       worker.registerProcessor("COMMAND", commandProcessor)
-      await worker.initialize()
-      await worker.start()
+      await worker.preflight()
 
       // Register EVENT processor after start (simulates framework preflight order)
       worker.registerProcessor("EVENT", eventProcessor)
@@ -225,20 +225,20 @@ describe("PollingWorker", () => {
       expect(commandProcessor).toHaveBeenCalledTimes(1)
       expect(eventProcessor).toHaveBeenCalledTimes(1)
 
-      await worker.stop()
+      await worker.shutdown()
     })
 
     it("invokes onCompletion callback when event is processed", async () => {
       const onCompletion = vi.fn()
       const processor = vi.fn().mockResolvedValue(undefined)
 
-      const worker = createPollingWorker(dbAdapter, logger, {
+      const worker = new PollingWorker(logger, {
         pollIntervalMs: 50,
         batchSize: 10,
-      })
+      });
+      worker.setAdapter(dbAdapter)
       worker.registerProcessor("COMMAND", processor, onCompletion)
-      await worker.initialize()
-      await worker.start()
+      await worker.preflight()
 
       const eventId = uuid()
       await db
@@ -264,7 +264,7 @@ describe("PollingWorker", () => {
         "PROCESSED",
       )
 
-      await worker.stop()
+      await worker.shutdown()
     })
   })
 })

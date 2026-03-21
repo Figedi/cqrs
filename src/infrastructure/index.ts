@@ -5,7 +5,7 @@ export { PersistentEventStore } from "./PersistentEventStore.js"
 export type { CompletionCallback, EventProcessor } from "./PollingWorker.js"
 
 // Polling Worker
-export { createPollingWorker, PollingWorker } from "./PollingWorker.js"
+export { PollingWorker } from "./PollingWorker.js"
 export type {
   BackoffMode,
   EventStatus,

@@ -10,6 +10,7 @@ import type {
   Logger,
 } from "../types.js"
 import { CQRSEventType } from "../types.js"
+import { IDbAdapter } from "../infrastructure/db/pgAdapter.js"
 
 export const convertTimingsToMs = ([seconds, nanoseconds]: number[]): number =>
   ((seconds * 1e9 + nanoseconds) / 1e6) | 0
@@ -17,6 +18,8 @@ export const convertTimingsToMs = ([seconds, nanoseconds]: number[]): number =>
 export class LoggingDecorator implements IDecorator {
   constructor(private rootLogger: Logger) {}
 
+  public setAdapter(_adapter: IDbAdapter): void {}
+  
   decorate<T extends ICommand | IQuery, TRes extends AnyEither>(
     handler: ICommandHandler<T, TRes> | IQueryHandler<T, TRes>,
   ) {

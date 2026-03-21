@@ -7,12 +7,14 @@ import type {
   ITransactionalScope,
   StringEither,
 } from "../types.js"
+import { IDbAdapter } from "./db/pgAdapter.js"
 
 export interface IScheduleOptions extends ExecuteOpts {
   executeSync?: boolean
 }
 
 export interface IEventScheduler {
+  setAdapter(adapter: IDbAdapter): void
   scheduleCommand<TPayload extends Record<string, any>, TRes extends AnyEither>(
     command: ICommand<TPayload, TRes>,
     executeAt: Date,
@@ -102,6 +104,7 @@ export interface IPollResult {
 }
 
 export interface IEventStore {
+  setAdapter(adapter: IDbAdapter): void
   insert(event: IPersistedEvent, opts?: { allowUpsert?: boolean; scope?: ITransactionalScope }): Promise<void>
   updateByEventId(
     eventId: string,
