@@ -1,6 +1,5 @@
 import type { Left } from "fp-ts/lib/Either.js"
 import { isLeft, left, right } from "fp-ts/lib/Either.js"
-import type { Transaction } from "kysely"
 import { Observable } from "rxjs"
 import { serializeError } from "serialize-error"
 import { v4 as uuid } from "uuid"
@@ -12,7 +11,7 @@ import {
   NoHandlerFoundError,
   TimeoutExceededError,
 } from "../errors.js"
-import type { Database, IDbAdapter } from "../infrastructure/db/index.js"
+import type { IDbAdapter } from "../infrastructure/db/index.js"
 import type { PollingWorker } from "../infrastructure/PollingWorker.js"
 import type { EventStatus, IEventStore, IPersistedEvent } from "../infrastructure/types.js"
 import {
@@ -248,9 +247,20 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
         }
         return right(undefined) as TRes
       } else {
-        // FAILED or ABORTED
+        // ABORTED — surface persisted meta.error when present (plain object from serialize-error)
         const [event] = await this.eventStore.findByEventIds([eventId])
-        const error = event?.meta?.error || new Error(`Command ${status}`)
+        const errMeta = event?.meta?.error as { message?: string; stack?: string } | undefined
+        const error =
+          errMeta && typeof errMeta === "object"
+            ? Object.assign(
+                new Error(
+                  typeof errMeta.message === "string" ? errMeta.message : `Command ${status} (eventId=${eventId})`,
+                ),
+                errMeta,
+              )
+            : new Error(
+                `Command ${status} (eventId=${eventId}); no meta.error on persisted event (check events row)`,
+              )
         return left(error) as TRes
       }
     } catch (e) {
@@ -423,7 +433,7 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
   /**
    * Process a command event from the polling worker.
    */
-  private async processEvent(event: IPersistedEvent, trx: Transaction<Database>): Promise<void> {
+  private async processEvent(event: IPersistedEvent, scope: ITransactionalScope): Promise<void> {
     const registered = this.handlers.get(event.eventName)
     if (!registered) {
       throw new NoHandlerFoundError(`No handler registered for ${event.eventName}`)
@@ -432,25 +442,23 @@ export class OutboxCommandBus implements ICommandBus, ServiceWithLifecycleHandle
     const command = this.deserializeCommand(event)
     const ctx = {
       logger: this.logger,
-      scope: trx,
+      scope,
     }
 
     const result = await registered.handler.handle(command, ctx)
 
-    // Store result in meta for executeSync retrieval
-    if (!isLeft(result)) {
-      await this.eventStore.updateByEventId(
-        event.eventId,
-        {
-          meta: { ...event.meta, result },
-        },
-        { scope: trx },
-      )
-    }
+    // Persist handler outcome for executeSync. Domain failures encoded as Either.left must not
+    // throw — throwing marks the outbox row FAILED and loses the Either for the caller.
+    const storableResult = isLeft(result)
+      ? ({ _tag: "Left", left: serializeError(result.left) } as const)
+      : result
 
-    if (isLeft(result)) {
-      throw result.left
-    }
+    await this.eventStore.updateByEventId(
+      event.eventId,
+      {
+        meta: { ...event.meta, result: storableResult },
+      },
+    )
   }
 
   /**

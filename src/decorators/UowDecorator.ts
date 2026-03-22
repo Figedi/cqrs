@@ -169,9 +169,8 @@ export class UowDecorator implements IDecorator {
                 return res
               })()
 
-          if (isLeft(result)) {
-            throw result.left
-          }
+          // Do not throw on Either.left: domain failure must propagate to OutboxCommandBus.processEvent
+          // so meta.result is stored and the row is marked PROCESSED (executeSync returns the Either).
           return result as TRes
         }
 

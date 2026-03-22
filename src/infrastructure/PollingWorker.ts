@@ -1,8 +1,7 @@
 import { sql, type Transaction } from "kysely"
 import { v4 as uuid } from "uuid"
-import type { IDbAdapter } from "./db/index.js"
-import type { Database } from "./db/index.js"
-import type { Logger } from "../types.js"
+import type { IDbAdapter, Database } from "./db/index.js"
+import type { ITransactionalScope, Logger } from "../types.js"
 import type { EventStatus, EventTypes, IPersistedEvent, IPollResult, IRateLimitConfig, IWorkerConfig } from "./types.js"
 import { calculateNextRetryAt, DEFAULT_RETRY_CONFIG, shouldAbort } from "./utils/backoff.js"
 import { type IRateLimiter, RateLimitExceededError } from "./utils/rateLimiter.js"
@@ -17,7 +16,7 @@ export const DEFAULT_WORKER_CONFIG: IWorkerConfig = {
 }
 
 /** Callback for processing a claimed event */
-export type EventProcessor = (event: IPersistedEvent, trx: Transaction<Database>) => Promise<void>
+export type EventProcessor = (event: IPersistedEvent, scope: ITransactionalScope) => Promise<void>
 
 /** Callback for handling event completion (success or failure) */
 export type CompletionCallback = (event: IPersistedEvent, status: EventStatus, error?: Error) => void
@@ -201,15 +200,17 @@ export class PollingWorker {
       }
 
       // Initial check (race condition protection)
+      // Only resolve on truly terminal statuses: PROCESSED or ABORTED.
+      // FAILED is retryable and should NOT short-circuit executeSync.
       this.checkEventStatus(eventId).then(status => {
-        if (status && ["PROCESSED", "FAILED", "ABORTED"].includes(status)) {
+        if (status && ["PROCESSED", "ABORTED"].includes(status)) {
           resolveWithCleanup(status)
           return
         }
         // Polling fallback for environments without LISTEN/NOTIFY (e.g. PGlite)
         pollInterval = setInterval(async () => {
           const s = await this.checkEventStatus(eventId)
-          if (s && ["PROCESSED", "FAILED", "ABORTED"].includes(s)) {
+          if (s && ["PROCESSED", "ABORTED"].includes(s)) {
             resolveWithCleanup(s)
           }
         }, 50)
@@ -347,13 +348,13 @@ export class PollingWorker {
     }
 
     try {
-      await this.adapter!.db.transaction().execute(async trx => {
-        // Process the event (handler may update event meta within this transaction)
-        await processor(event, trx)
+      // Run processor WITHOUT a wrapping transaction so long-running handlers
+      // don't hold an idle DB connection. The UowDecorator creates short-lived
+      // transactions for the handler's actual DB work.
+      await processor(event, this.adapter!.db)
 
-        // Mark as processed within the same transaction
-        await this.markProcessed(event.eventId, trx)
-      })
+      // Mark as processed after handler completes (short DB operation)
+      await this.markProcessed(event.eventId)
 
       onCompletion?.(event, "PROCESSED")
     } catch (error) {
@@ -478,6 +479,10 @@ export class PollingWorker {
         lockedBy: null,
         retryCount: sql`COALESCE(retry_count, 0) + 1`,
         nextRetryAt: sql`NOW()`,
+        meta: sql`jsonb_set(COALESCE(meta, '{}'), '{error}', ${JSON.stringify({
+          message: `Lock timeout exceeded (${this.config.lockTimeoutMs}ms). Event was still PROCESSING when the stale lock cleaner ran.`,
+          name: "StaleLockTimeoutError",
+        })}::jsonb)`,
       })
       .where("lockedAt", "is not", null)
       .where("lockedAt", "<", sql<Date>`NOW() - INTERVAL ${sql.lit(lockTimeoutInterval)}`)
@@ -499,7 +504,7 @@ export class PollingWorker {
         try {
           const data = JSON.parse(payload)
           const listener = this.notifyListeners.get(data.event_id)
-          if (listener) {
+          if (listener && ["PROCESSED", "ABORTED"].includes(data.status)) {
             listener(data.status as EventStatus)
           }
         } catch {

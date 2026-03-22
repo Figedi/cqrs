@@ -167,5 +167,8 @@ export class CQRSModule {
     if (this.timeBasedEventScheduler && "shutdown" in this.timeBasedEventScheduler) {
       await (this.timeBasedEventScheduler as any).shutdown()
     }
+    if (this.adapter?.db) {
+      await this.adapter.db.destroy()
+    }
   }
 }
