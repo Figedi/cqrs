@@ -1,7 +1,7 @@
 import { firstValueFrom, take, timeout, toArray } from "rxjs"
 import { describe, expect, it } from "vitest"
-import { CQRSEventType } from "../../types.js"
-import { createStreamController, type IStreamEvent, StreamController } from "./StreamController.js"
+import { CQRSEventType } from "../../../src/types.js"
+import { createStreamController, type IStreamEvent, StreamController } from "../../../src/infrastructure/utils/StreamController.js"
 
 const createTestEvent = (eventId: string, status: "PROCESSED" | "FAILED" | "ABORTED" = "PROCESSED"): IStreamEvent => ({
   event: {

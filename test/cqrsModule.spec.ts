@@ -16,10 +16,10 @@ import {
   createQuery,
   createQueryHandler,
   serializeEvent,
-} from "./common.js"
-import { CQRSModule } from "./cqrsModule.js"
-import { RetriesExceededError } from "./errors.js"
-import { type PGliteDbAdapter } from "./infrastructure/db/index.js"
+} from "../src/common.js"
+import { CQRSModule } from "../src/cqrsModule.js"
+import { RetriesExceededError } from "../src/errors.js"
+import { type PGliteDbAdapter, createPGliteAdapter } from "./pgliteAdapter.js"
 import type {
   Constructor,
   HandlerContext,
@@ -31,8 +31,8 @@ import type {
   ISaga,
   ITransactionalScope,
   VoidEither,
-} from "./types.js"
-import { sleep } from "./utils/sleep.js"
+} from "../src/types.js"
+import { sleep } from "../src/utils/sleep.js"
 
 type ExampleQueryResult = Either<Error, { id: string; result: number }>
 
@@ -176,6 +176,7 @@ describe("cqrsModule", () => {
         persistence: {
           type: "pglite",
           runMigrations: true,
+          createAdapter: createPGliteAdapter,
         },
         outbox: {
           worker: { pollIntervalMs: 100 },

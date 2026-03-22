@@ -1,11 +1,11 @@
 import { v4 as uuid } from "uuid"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
-import { sleep } from "../utils/sleep.js"
-import { createPGliteAdapter } from "./db/index.js"
-import { runEventsMigration } from "./db/index.js"
-import type { IDbAdapter } from "./db/index.js"
-import type { KyselyDb } from "./db/index.js"
-import { PollingWorker } from "./PollingWorker.js"
+import { sleep } from "../../src/utils/sleep.js"
+import { createPGliteAdapter } from "../pgliteAdapter.js"
+import { runEventsMigration } from "../../src/infrastructure/db/index.js"
+import type { IDbAdapter } from "../../src/infrastructure/db/index.js"
+import type { KyselyDb } from "../../src/infrastructure/db/index.js"
+import { PollingWorker } from "../../src/infrastructure/PollingWorker.js"
 
 describe("PollingWorker", () => {
   let db: KyselyDb

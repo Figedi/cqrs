@@ -71,6 +71,7 @@ export interface IPostgresSettings {
 export interface IPgliteSettings {
   type: "pglite"
   runMigrations?: boolean
+  createAdapter: () => Promise<IDbAdapter>
 }
 
 

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest"
-import type { IRetryConfig } from "../types.js"
+import type { IRetryConfig } from "../../../src/infrastructure/types.js"
 import {
   calculateBackoffDelay,
   calculateNextRetryAt,
   DEFAULT_RETRY_CONFIG,
   mergeRetryConfig,
   shouldAbort,
-} from "./backoff.js"
+} from "../../../src/infrastructure/utils/backoff.js"
 
 describe("backoff utilities", () => {
   describe("DEFAULT_RETRY_CONFIG", () => {

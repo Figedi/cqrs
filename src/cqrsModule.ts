@@ -14,11 +14,11 @@ import type {
   ICommandBus,
   ICQRSSettings,
   IEventBus,
+  IPgliteSettings,
   IPostgresSettings,
   IQueryBus,
   Logger,
 } from "./types.js"
-import { createPGliteAdapter } from "./infrastructure/db/index.js"
 import { TimeBasedEventScheduler } from "./utils/TimeBasedEventScheduler.js"
 import { createWaitUntilIdle } from "./utils/waitUntilIdle.js"
 import { createWaitUntilSettled } from "./utils/waitUntilSettled.js"
@@ -125,7 +125,8 @@ export class CQRSModule {
         const pgSettings = this.settings.persistence as IPostgresSettings
         this.adapter = createDbAdapter(pgSettings.connectionString, pgSettings.options)
       } else {
-        this.adapter = await createPGliteAdapter()
+        const pgliteSettings = this.settings.persistence as IPgliteSettings
+        this.adapter = await pgliteSettings.createAdapter()
       }
       this.wirePersistence(this.adapter)
     }
@@ -167,6 +168,13 @@ export class CQRSModule {
     if (this.timeBasedEventScheduler && "shutdown" in this.timeBasedEventScheduler) {
       await (this.timeBasedEventScheduler as any).shutdown()
     }
+  }
+
+  /**
+   * Fully destroy the CQRS module, releasing all DB connections.
+   * Call after shutdown() when the process is exiting.
+   */
+  public async destroy(): Promise<void> {
     if (this.adapter?.db) {
       await this.adapter.db.destroy()
     }

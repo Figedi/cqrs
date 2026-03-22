@@ -129,6 +129,8 @@ export function createDbAdapter(
     return driver
   }
   const pool = new pg.Pool({ connectionString: driver, ...options })
+  // pg requires a pool-level error handler; unhandled idle-client errors crash the process.
+  pool.on("error", () => {})
   const db = createKyselyFromPool(pool)
   return new PgDbAdapter(db, pool)
 }

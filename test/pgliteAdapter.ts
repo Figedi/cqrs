@@ -1,13 +1,13 @@
 import { PGlite } from "@electric-sql/pglite"
 import { CamelCasePlugin, Kysely } from "kysely"
-import { PGliteDialect } from "kysely-pglite-dialect"
+import { PGliteDialect } from "./pgliteDialect.js"
 import type { QueryResult, QueryResultRow } from "pg"
-import type { IRateLimitConfig } from "../types.js"
-import { createRateLimiterInMemory } from "../utils/rateLimiter.js"
-import type { IRateLimiter } from "../utils/rateLimiter.js"
-import type { IDbAdapter } from "./pgAdapter.js"
-import type { KyselyDb } from "./kysely.js"
-import { Database } from "./schema.js"
+import type { IRateLimitConfig } from "../src/infrastructure/types.js"
+import { createRateLimiterInMemory } from "../src/infrastructure/utils/rateLimiter.js"
+import type { IRateLimiter } from "../src/infrastructure/utils/rateLimiter.js"
+import type { IDbAdapter } from "../src/infrastructure/db/pgAdapter.js"
+import type { KyselyDb } from "../src/infrastructure/db/kysely.js"
+import { Database } from "../src/infrastructure/db/schema.js"
 
 /**
  * Convert PGlite result to pg.QueryResult format (for raw SQL).
