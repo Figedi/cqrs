@@ -57,6 +57,9 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
    * Register EVENT processor on the shared worker. Worker preflight/start is done by CQRSModule.
    */
   async preflight(): Promise<void> {
+    // Internal: persisted rows from older versions must deserialize; new publishes use transient (see registerSagas).
+    this.register(SagaTriggeredCommandEvent)
+
     this.pollingWorker.registerProcessor(
       "EVENT",
       async event => this.processEvent(event),
@@ -109,12 +112,15 @@ export class OutboxEventBus implements IEventBus, ServiceWithLifecycleHandlers {
         const stream$ = saga.process(this.out$)
         const { commandBus } = this.ctxProvider()
         const subscription = stream$.subscribe(command => {
-          this.execute(
-            new SagaTriggeredCommandEvent({
-              sagaName: saga.constructor.name,
-              outgoingEventId: command.meta.eventId,
-              outgoingEventName: command.constructor.name,
-            }),
+          void this.execute(
+            new SagaTriggeredCommandEvent(
+              {
+                sagaName: saga.constructor.name,
+                outgoingEventId: command.meta.eventId,
+                outgoingEventName: command.constructor.name,
+              },
+              { transient: true },
+            ),
           )
           return commandBus.execute(command)
         })
