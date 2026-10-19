@@ -12,6 +12,7 @@ export const DEFAULT_WORKER_CONFIG: IWorkerConfig = {
   pollIntervalMs: 1000,
   batchSize: 10,
   lockTimeoutMs: 30000,
+  staleLockIntervalMs: 30000,
   retry: DEFAULT_RETRY_CONFIG,
 }
 
@@ -49,6 +50,7 @@ export class PollingWorker {
   private isPolling = false // Guard to prevent overlapping poll cycles
   private notifyListeners = new Map<string, (status: EventStatus) => void>()
   private processors = new Map<EventTypes, IRegisteredProcessor>()
+  private heartbeats = new Map<string, ReturnType<typeof setInterval>>()
   private isInitialized = false
   private adapter?: IDbAdapter
 
@@ -114,6 +116,10 @@ export class PollingWorker {
       this.staleLockTimer = undefined
     }
 
+    for (const eventId of [...this.heartbeats.keys()]) {
+      this.stopHeartbeat(eventId)
+    }
+
     try {
       await this.adapter!.unlisten("cqrs_event_status")
     } catch {
@@ -157,7 +163,7 @@ export class PollingWorker {
     this.staleLockTimer = setInterval(async () => {
       if (!this.isRunning) return
       await this.cleanupStaleLocks()
-    }, 30000)
+    }, this.config.staleLockIntervalMs)
 
     await this.pollAndProcess()
   }
@@ -269,15 +275,17 @@ export class PollingWorker {
 
     return await this.adapter!.db.transaction().execute(async trx => {
       // SELECT with FOR UPDATE SKIP LOCKED to atomically claim rows
-      const selected = await trx
+      let selection = trx
         .selectFrom("events")
         .select("eventId")
         .where("status", "=", status)
         .where("type", "in", eventTypes)
-        .limit(this.config.batchSize)
-        .forUpdate()
-        .skipLocked()
-        .execute()
+      if (status === "FAILED") {
+        selection = selection.where(eb =>
+          eb.or([eb("nextRetryAt", "is", null), eb("nextRetryAt", "<=", sql<Date>`NOW()`)]),
+        )
+      }
+      const selected = await selection.limit(this.config.batchSize).forUpdate().skipLocked().execute()
 
       if (selected.length === 0) {
         return { claimed: [], hasMore: false }
@@ -316,7 +324,16 @@ export class PollingWorker {
    */
   private async processBatch(events: IPersistedEvent[]): Promise<void> {
     for (const event of events) {
-      await this.processEvent(event)
+      this.ensureHeartbeat(event.eventId)
+    }
+    try {
+      for (const event of events) {
+        await this.processEvent(event)
+      }
+    } finally {
+      for (const event of events) {
+        this.stopHeartbeat(event.eventId)
+      }
     }
   }
 
@@ -348,24 +365,81 @@ export class PollingWorker {
     }
 
     try {
+      const stillOwned = await this.refreshLock(event.eventId)
+      if (!stillOwned) {
+        this.logger.warn(
+          { eventId: event.eventId, workerId: this.workerId },
+          "Skipping event; this worker no longer owns the lock",
+        )
+        return
+      }
+
       // Run processor WITHOUT a wrapping transaction so long-running handlers
       // don't hold an idle DB connection. The UowDecorator creates short-lived
       // transactions for the handler's actual DB work.
       await processor(event, this.adapter!.db)
 
-      // Mark as processed after handler completes (short DB operation)
-      await this.markProcessed(event.eventId)
-
-      onCompletion?.(event, "PROCESSED")
+      // Mark as processed after handler completes (short DB operation).
+      // No-op when another worker has since taken the lock.
+      const processed = await this.markProcessed(event.eventId)
+      if (processed) {
+        onCompletion?.(event, "PROCESSED")
+      }
     } catch (error) {
       this.logger.error({ eventId: event.eventId, error }, "Event processing failed")
       await this.handleProcessingError(event, error as Error, onCompletion)
     } finally {
+      this.stopHeartbeat(event.eventId)
       // Release rate limiter slot
       if (this.rateLimiter) {
         await this.rateLimiter.release(rateLimitKey)
       }
     }
+  }
+
+  /**
+   * Refresh every claimed row, including ones still waiting in this batch.
+   * Only the row inside the handler used to be refreshed, so the rest went stale and another worker ran them.
+   */
+  private ensureHeartbeat(eventId: string): void {
+    if (this.heartbeats.has(eventId)) {
+      return
+    }
+    const intervalMs = Math.max(50, Math.floor(this.config.lockTimeoutMs / 3))
+    const timer = setInterval(() => {
+      void this.refreshLock(eventId)
+        .then(owned => {
+          if (!owned) {
+            this.logger.warn({ eventId, workerId: this.workerId }, "Lost event lock; stopping heartbeat")
+            this.stopHeartbeat(eventId)
+          }
+        })
+        .catch(error => {
+          this.logger.warn({ eventId, error }, "Failed to refresh event lock")
+        })
+    }, intervalMs)
+    this.heartbeats.set(eventId, timer)
+  }
+
+  private stopHeartbeat(eventId: string): void {
+    const timer = this.heartbeats.get(eventId)
+    if (!timer) {
+      return
+    }
+    clearInterval(timer)
+    this.heartbeats.delete(eventId)
+  }
+
+  private async refreshLock(eventId: string): Promise<boolean> {
+    const updated = await this.adapter!.db
+      .updateTable("events")
+      .set({ lockedAt: sql`NOW()` })
+      .where("eventId", "=", eventId)
+      .where("lockedBy", "=", this.workerId)
+      .where("status", "=", "PROCESSING")
+      .returning("eventId")
+      .execute()
+    return updated.length > 0
   }
 
   /**
@@ -379,14 +453,18 @@ export class PollingWorker {
     const retryCount = (event.retryCount ?? 0) + 1
 
     if (shouldAbort(retryCount, this.config.retry.maxRetries)) {
-      // Exceeded max retries - mark as aborted
-      await this.markAborted(event.eventId, retryCount, error)
+      const aborted = await this.markAborted(event.eventId, retryCount, error)
+      if (!aborted) {
+        return
+      }
       this.logger.error({ eventId: event.eventId, retryCount, error }, "Event aborted after max retries")
       onCompletion?.(event, "ABORTED", error)
     } else {
-      // Schedule retry with backoff
       const nextRetryAt = calculateNextRetryAt(retryCount, this.config.retry)
-      await this.markFailed(event.eventId, retryCount, nextRetryAt, error)
+      const failed = await this.markFailed(event.eventId, retryCount, nextRetryAt, error)
+      if (!failed) {
+        return
+      }
       this.logger.warn({ eventId: event.eventId, retryCount, nextRetryAt, error }, "Event failed, scheduled for retry")
       onCompletion?.(event, "FAILED", error)
     }
@@ -395,9 +473,9 @@ export class PollingWorker {
   /**
    * Mark an event as processed.
    */
-  private async markProcessed(eventId: string, trx?: Transaction<Database>): Promise<void> {
+  private async markProcessed(eventId: string, trx?: Transaction<Database>): Promise<boolean> {
     const db = trx ?? this.adapter!.db
-    await db
+    const updated = await db
       .updateTable("events")
       .set({
         status: "PROCESSED",
@@ -405,14 +483,24 @@ export class PollingWorker {
         lockedBy: null,
       })
       .where("eventId", "=", eventId)
+      .where("lockedBy", "=", this.workerId)
+      .where("status", "=", "PROCESSING")
+      .returning("eventId")
       .execute()
+    if (updated.length === 0) {
+      this.logger.warn(
+        { eventId, workerId: this.workerId },
+        "Skipped markProcessed; this worker no longer owns the lock",
+      )
+    }
+    return updated.length > 0
   }
 
   /**
    * Mark an event as failed with retry scheduling.
    */
-  private async markFailed(eventId: string, retryCount: number, nextRetryAt: Date, error: Error): Promise<void> {
-    await this.adapter!.db
+  private async markFailed(eventId: string, retryCount: number, nextRetryAt: Date, error: Error): Promise<boolean> {
+    const updated = await this.adapter!.db
       .updateTable("events")
       .set({
         status: "FAILED",
@@ -426,14 +514,24 @@ export class PollingWorker {
         })}::jsonb)`,
       })
       .where("eventId", "=", eventId)
+      .where("lockedBy", "=", this.workerId)
+      .where("status", "=", "PROCESSING")
+      .returning("eventId")
       .execute()
+    if (updated.length === 0) {
+      this.logger.warn(
+        { eventId, workerId: this.workerId },
+        "Skipped markFailed; this worker no longer owns the lock",
+      )
+    }
+    return updated.length > 0
   }
 
   /**
    * Mark an event as aborted (max retries exceeded).
    */
-  private async markAborted(eventId: string, retryCount: number, error: Error): Promise<void> {
-    await this.adapter!.db
+  private async markAborted(eventId: string, retryCount: number, error: Error): Promise<boolean> {
+    const updated = await this.adapter!.db
       .updateTable("events")
       .set({
         status: "ABORTED",
@@ -446,7 +544,17 @@ export class PollingWorker {
         })}::jsonb)`,
       })
       .where("eventId", "=", eventId)
+      .where("lockedBy", "=", this.workerId)
+      .where("status", "=", "PROCESSING")
+      .returning("eventId")
       .execute()
+    if (updated.length === 0) {
+      this.logger.warn(
+        { eventId, workerId: this.workerId },
+        "Skipped markAborted; this worker no longer owns the lock",
+      )
+    }
+    return updated.length > 0
   }
 
   /**
@@ -466,7 +574,8 @@ export class PollingWorker {
   }
 
   /**
-   * Cleanup stale locks from dead workers.
+   * Release PROCESSING locks whose owner has not refreshed `lockedAt` within `lockTimeoutMs`.
+   * A worker that is still inside its handler refreshes the lock, so another worker cannot take it.
    */
   private async cleanupStaleLocks(): Promise<void> {
     const lockTimeoutInterval = `${this.config.lockTimeoutMs} milliseconds`

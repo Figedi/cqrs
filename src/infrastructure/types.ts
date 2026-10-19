@@ -52,7 +52,10 @@ export interface IRetryConfig {
 
 /** Configuration for the polling worker */
 export interface IWorkerConfig {
-  /** Unique identifier for this worker instance */
+  /**
+   * Unique identifier for this worker instance.
+   * Two processes that share the events table must not use the same id, or they can refresh each other's locks.
+   */
   workerId: string
   /** Polling interval in milliseconds (default: 1000) */
   pollIntervalMs: number
@@ -60,6 +63,11 @@ export interface IWorkerConfig {
   batchSize: number
   /** Lock timeout in milliseconds before stale locks are released (default: 30000) */
   lockTimeoutMs: number
+  /**
+   * How often to look for stale locks (default: 30000).
+   * A lock is stale only when its owner has not refreshed it within `lockTimeoutMs`.
+   */
+  staleLockIntervalMs: number
   /** Retry configuration */
   retry: IRetryConfig
 }
